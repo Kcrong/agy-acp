@@ -22,9 +22,9 @@
 
 - [x] 설치된 `agy`의 stream-json 입력·출력 event를 정상·오류·취소 흐름별 fixture로 확보합니다.
 - [x] ACP v1 필수 method와 선택 capability를 분류합니다.
-- [ ] ACP request/update와 `agy` event 간 변환 표를 작성합니다.
-- [ ] 세션, 동시성, 취소, timeout, process 종료 정책을 결정합니다.
-- [ ] 지원하지 않는 ACP capability는 광고하지 않고 명시적인 protocol error를 반환하도록 정의합니다.
+- [x] ACP request/update와 `agy` event 간 변환 표를 작성합니다.
+- [x] 세션, 동시성, 취소, timeout, process 종료 정책을 결정합니다.
+- [x] 지원하지 않는 ACP capability는 광고하지 않고 명시적인 protocol error를 반환하도록 정의합니다.
 
 ## 2. 프로젝트 기반 구축
 
