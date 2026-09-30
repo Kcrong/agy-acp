@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: Node stdio를 SDK `ndJsonStream`에 연결하는 real CLI entry point와 fake `agy` executable 기반 ACP client-to-process E2E harness를 구현합니다.
+- 다음 작업: fake `agy` mode를 확장해 split streaming, malformed JSON, 조기 종료, prompt timeout, cancellation, 동시 session E2E를 추가하고 child leak을 검증합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -56,6 +56,10 @@
 - [x] Text·ResourceLink를 `agy` user event로 변환하고 `text_delta`를 ACP `agent_message_chunk`로 순서대로 streaming합니다.
 - [x] SDK runtime peer `zod 4.6.5`를 public consumer 재현성을 위해 direct exact dependency로 고정했습니다.
 - [x] ACP Agent targeted 4/4, 전체 unit 48/48, typecheck, lint, build 통과.
+- [x] Node stdin/stdout을 SDK `ndJsonStream`에 연결하고 `--agy-path`, signal/EOF cleanup, fixed stderr failure를 제공하는 real CLI를 구현했습니다.
+- [x] Credential-free fake `agy` executable과 실제 ACP client→CLI→child→streaming→close E2E harness를 구현했습니다.
+- [x] SDK connection close만으로 Node pipe EOF가 발생하지 않는 hang을 단계별 3초 timeout으로 특정하고 client stdin EOF를 명시해 수정했습니다.
+- [x] `npm run check`: unit 48/48, normal stdio E2E 1/1, lint, typecheck, build 통과.
 
 ## 진행 중
 
@@ -70,7 +74,8 @@
 - [x] ProcessController cancel·timeout·cleanup
 - [x] SessionManager isolation·lifecycle
 - [x] ACP AgentApp baseline handlers
-- [ ] stdio CLI와 fake-agy E2E
+- [x] stdio CLI와 fake-agy normal E2E
+- [ ] failure·cancel·concurrent E2E matrix
 
 ## 대기
 

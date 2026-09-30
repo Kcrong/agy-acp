@@ -55,7 +55,7 @@
 ## 5. 신뢰성 테스트
 
 - [x] parser, event mapping, session manager, error mapping, cancellation unit test를 작성합니다.
-- [ ] fake `agy`를 이용한 ACP client-to-process mock E2E harness를 작성합니다.
+- [x] fake `agy`를 이용한 ACP client-to-process mock E2E harness를 작성합니다.
 - [ ] 정상 streaming, 분할 JSON, malformed JSON, 조기 종료, timeout, 취소, 동시 session을 E2E로 검증합니다.
 - [ ] 설치된 실제 `agy`로 자격 증명을 노출하지 않는 최소 smoke E2E를 통과시킵니다.
 - [ ] open handle과 child process 누수가 없음을 검증합니다.

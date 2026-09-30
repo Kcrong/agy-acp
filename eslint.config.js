@@ -6,6 +6,14 @@ export default tseslint.config(
     ignores: ["dist/**", "node_modules/**", "coverage/**", ".kiro/**"],
   },
   eslint.configs.recommended,
+  {
+    files: ["**/*.{js,mjs,cjs}"],
+    languageOptions: {
+      globals: {
+        process: "readonly",
+      },
+    },
+  },
   ...tseslint.configs.recommendedTypeChecked.map((config) => ({
     ...config,
     files: ["**/*.ts"],
