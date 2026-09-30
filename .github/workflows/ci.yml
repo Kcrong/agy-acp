@@ -33,7 +33,7 @@ jobs:
             e2e: true
           - os: windows-latest
             node: 22
-            e2e: false
+            e2e: true
 
     steps:
       - name: Check out repository

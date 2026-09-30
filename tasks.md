@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: fake E2E를 Windows에서도 shell 없이 실행 가능하게 만들고 SECURITY package inclusion, npm 10/11 계약, unknown-event 문서를 수정한 뒤 독립 재리뷰합니다.
+- 다음 작업: actual tarball pack→scratch clean install→packaged bin/import smoke를 재사용 가능한 Node script로 추가하고 CI에 연결한 뒤 독립 재리뷰합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -108,7 +108,11 @@
 - [x] Medium: server startup에서 bare `agy`를 absolute PATH entry로 resolve하고 configured relative path를 거부하며 realpath를 session cwd 이전에 고정합니다.
 - [x] Medium: POSIX detached process group signal과 Windows absolute `taskkill.exe /T` tree strategy를 구현했습니다.
 - [x] Executable/tree targeted 35/35, 전체 unit 76/76, mock E2E 8/8, real agy 1/1, lint, typecheck, build 통과.
-- [ ] Public/Low remediation: Windows fake E2E portability, packed SECURITY link, npm version contract, unknown-event 문서.
+- [x] Public/Low: `--agy-arg` static prefix argv로 Node fake script를 Windows에서도 shell 없이 실행하고 CI Windows E2E를 활성화했습니다.
+- [x] Public/Low: package에 SECURITY.md를 포함하고 npm `>=10.9.0 <12` 지원 범위를 문서화했습니다.
+- [x] Public/Low: unknown events는 raw payload 없이 조용히 무시하는 실제 동작으로 문서를 정정했습니다.
+- [x] Public corrections 후 unit 77/77, mock E2E 8/8, package SECURITY inclusion, Windows E2E YAML 검증 통과.
+- [ ] Publication remediation: CI pack→clean install→packaged bin smoke와 독립 재리뷰.
 
 
 ## 진행 중

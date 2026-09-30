@@ -4,7 +4,7 @@ Thank you for helping improve `agy-acp`.
 
 ## Development setup
 
-Requirements: Node.js `>=22.13.0`, npm 11, and an optional authenticated `agy >=1.2.14` for the real smoke test.
+Requirements: Node.js `>=22.13.0`, npm `>=10.9.0 <12`, and an optional authenticated `agy >=1.2.14` for the real smoke test.
 
 ```bash
 npm ci --ignore-scripts

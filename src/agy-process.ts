@@ -8,6 +8,7 @@ import { isAbsolute, win32 } from "node:path";
 export interface AgyInvocationOptions {
   readonly cwd: string;
   readonly executable?: string;
+  readonly executableArguments?: readonly string[];
   readonly conversationId?: string;
   readonly additionalDirectories?: readonly string[];
   readonly env?: NodeJS.ProcessEnv;
@@ -57,6 +58,12 @@ export function buildAgyInvocation(
   requireNonEmptyWithoutNull(executable, "executable");
 
   const args: string[] = [];
+  for (const argument of options.executableArguments ?? []) {
+    if (argument.includes("\0")) {
+      throw new AgyProcessConfigError("executableArguments");
+    }
+    args.push(argument);
+  }
   for (const directory of options.additionalDirectories ?? []) {
     requireAbsolutePath(directory, "additionalDirectories");
     args.push(`--add-dir=${directory}`);

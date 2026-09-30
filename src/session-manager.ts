@@ -20,6 +20,7 @@ export type SessionManagerErrorCode =
 export interface SessionManagerOptions {
   readonly limits: RuntimeLimits;
   readonly executable?: string;
+  readonly executableArguments?: readonly string[];
   readonly env?: NodeJS.ProcessEnv;
 }
 
@@ -432,6 +433,7 @@ export class SessionManager {
     const invocation: {
       cwd: string;
       executable?: string;
+      executableArguments?: readonly string[];
       conversationId?: string;
       additionalDirectories?: readonly string[];
       env?: NodeJS.ProcessEnv;
@@ -439,6 +441,9 @@ export class SessionManager {
 
     if (this.#options.executable !== undefined) {
       invocation.executable = this.#options.executable;
+    }
+    if (this.#options.executableArguments !== undefined) {
+      invocation.executableArguments = [...this.#options.executableArguments];
     }
     if (this.#options.env !== undefined) {
       invocation.env = this.#options.env;

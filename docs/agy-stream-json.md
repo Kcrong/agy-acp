@@ -98,5 +98,5 @@ SIGTERM 흐름에서 `agy`는 종료 전에 structured error result를 출력했
 - `text_delta`만 ACP streaming text update로 전달합니다.
 - terminal `result.status=SUCCESS`를 정상 완료 조건으로 사용합니다.
 - `ERROR`, malformed NDJSON, 조기 EOF, non-zero exit를 typed bridge error로 변환합니다.
-- unknown event는 진단 로그에 남기되 ACP 연결을 깨지 않습니다.
+- unknown event는 forward compatibility를 위해 조용히 무시하며 raw event 이름이나 payload를 기본 로그에 남기지 않습니다.
 - `conversation_id`, usage, stderr는 ACP protocol `stdout`에 임의로 출력하지 않습니다.

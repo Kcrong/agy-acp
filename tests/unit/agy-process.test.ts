@@ -28,6 +28,7 @@ describe("buildAgyInvocation", () => {
     const invocation = buildAgyInvocation({
       cwd: "/workspace;echo ignored",
       executable: "/opt/agy binary",
+      executableArguments: ["/fixture script.mjs", "--fixed-mode"],
       conversationId: "id;echo ignored",
       additionalDirectories: ["/other root", "/value;echo ignored"],
     });
@@ -35,6 +36,8 @@ describe("buildAgyInvocation", () => {
     expect(invocation).toEqual({
       command: "/opt/agy binary",
       args: [
+        "/fixture script.mjs",
+        "--fixed-mode",
         "--add-dir=/other root",
         "--add-dir=/value;echo ignored",
         "--conversation=id;echo ignored",
@@ -53,6 +56,7 @@ describe("buildAgyInvocation", () => {
     [{ cwd: "/workspace", additionalDirectories: ["relative/path"] }, "additionalDirectories"],
     [{ cwd: "/workspace", conversationId: "" }, "conversationId"],
     [{ cwd: "/workspace", executable: "agy\0other" }, "executable"],
+    [{ cwd: "/workspace", executableArguments: ["bad\0argument"] }, "executableArguments"],
   ] as const)("rejects invalid launch configuration at %s", (input, field) => {
     expect(() => buildAgyInvocation(input)).toThrowError(
       expect.objectContaining<Partial<AgyProcessConfigError>>({

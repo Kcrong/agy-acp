@@ -36,7 +36,13 @@ describe("agy-acp stdio", () => {
   it("streams a prompt through a real CLI and fake agy process", async () => {
     const child = spawn(
       process.execPath,
-      [CLI_PATH, "--agy-path", FAKE_AGY_PATH],
+      [
+        CLI_PATH,
+        "--agy-path",
+        process.execPath,
+        "--agy-arg",
+        FAKE_AGY_PATH,
+      ],
       {
         cwd: process.cwd(),
         env: {

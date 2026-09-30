@@ -26,6 +26,7 @@ ACP client/editor
 ## Requirements
 
 - Node.js `>=22.13.0` (Node.js 22 and 24 are tested targets).
+- npm `>=10.9.0 <12`.
 - `agy >=1.2.14` installed and authenticated in the same user environment.
 - An ACP v1-compatible client that can launch a local stdio agent.
 
@@ -84,6 +85,22 @@ To select a specific Antigravity executable:
 
 Client configuration keys differ between editors. Map the `command` and `args` values above to your client's local stdio-agent settings.
 
+For a wrapper executable, repeat `--agy-arg` for static prefix arguments. These values come only from server startup configuration and are passed literally with `shell: false`:
+
+```json
+{
+  "command": "npx",
+  "args": [
+    "--no-install",
+    "agy-acp",
+    "--agy-path",
+    "/absolute/path/to/node",
+    "--agy-arg",
+    "/absolute/path/to/wrapper.mjs"
+  ]
+}
+```
+
 For a source checkout, use `node` with the absolute path to `dist/cli.js` after `npm run build`.
 
 ## Supported ACP surface
@@ -140,7 +157,7 @@ npm ci --ignore-scripts
 npm run check
 ```
 
-`npm run check` runs lint, strict type checking, 50 unit tests, credential-free fake-process E2E tests, and the build.
+`npm run check` runs lint, strict type checking, unit tests, credential-free fake-process E2E tests, and the build.
 
 The real authenticated smoke test is opt-in:
 

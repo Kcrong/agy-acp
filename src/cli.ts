@@ -17,6 +17,7 @@ export interface AgyAcpServerOptions {
   readonly output: Writable;
   readonly env: NodeJS.ProcessEnv;
   readonly agyPath?: string;
+  readonly agyArgs?: readonly string[];
   readonly limits?: RuntimeLimits;
   readonly signal?: AbortSignal;
 }
@@ -29,11 +30,16 @@ export async function runAgyAcpServer(
     options.agyPath ?? options.env.AGY_ACP_AGY_PATH ?? "agy",
     options.env,
   );
-  const manager = new SessionManager({
+  const managerOptions = {
     limits,
     executable,
     env: options.env,
-  });
+  };
+  const manager = new SessionManager(
+    options.agyArgs === undefined
+      ? managerOptions
+      : { ...managerOptions, executableArguments: options.agyArgs },
+  );
   const stream = ndJsonStream(
     Writable.toWeb(options.output) as WritableStream<Uint8Array>,
     Readable.toWeb(options.input) as ReadableStream<Uint8Array>,
@@ -63,6 +69,7 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
     strict: true,
     options: {
       "agy-path": { type: "string" },
+      "agy-arg": { type: "string", multiple: true },
     },
   });
   const abort = new AbortController();
@@ -71,16 +78,21 @@ export async function main(args = process.argv.slice(2)): Promise<void> {
   process.once("SIGTERM", stop);
 
   try {
-    const serverOptions: AgyAcpServerOptions = {
+    let serverOptions: AgyAcpServerOptions = {
       input: process.stdin,
       output: process.stdout,
       env: process.env,
       signal: abort.signal,
     };
     const agyPath = parsed.values["agy-path"];
-    await runAgyAcpServer(
-      agyPath === undefined ? serverOptions : { ...serverOptions, agyPath },
-    );
+    const agyArgs = parsed.values["agy-arg"];
+    if (agyPath !== undefined) {
+      serverOptions = { ...serverOptions, agyPath };
+    }
+    if (agyArgs !== undefined) {
+      serverOptions = { ...serverOptions, agyArgs };
+    }
+    await runAgyAcpServer(serverOptions);
   } finally {
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);

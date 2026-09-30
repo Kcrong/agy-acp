@@ -50,7 +50,13 @@ async function withCli(
 ): Promise<void> {
   const child = spawn(
     process.execPath,
-    [CLI_PATH, "--agy-path", FAKE_AGY_PATH],
+    [
+      CLI_PATH,
+      "--agy-path",
+      process.execPath,
+      "--agy-arg",
+      FAKE_AGY_PATH,
+    ],
     {
       cwd: process.cwd(),
       env: {
