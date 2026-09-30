@@ -28,6 +28,8 @@ interface FakeProcess {
   readonly stderr: PassThrough;
   readonly signals: NodeJS.Signals[];
   emitExit(code?: number | null, signal?: NodeJS.Signals | null): void;
+  emitExitOnly(code?: number | null, signal?: NodeJS.Signals | null): void;
+  emitClose(code?: number | null, signal?: NodeJS.Signals | null): void;
 }
 
 function createFakeProcess(stdin: Writable = new PassThrough()): FakeProcess {
@@ -54,6 +56,13 @@ function createFakeProcess(stdin: Writable = new PassThrough()): FakeProcess {
     signals,
     emitExit(code = 0, signal = null) {
       emitter.emit("exit", code, signal);
+      emitter.emit("close", code, signal);
+    },
+    emitExitOnly(code = 0, signal = null) {
+      emitter.emit("exit", code, signal);
+    },
+    emitClose(code = 0, signal = null) {
+      emitter.emit("close", code, signal);
     },
   };
 }
@@ -131,6 +140,7 @@ describe("AgyProcessController", () => {
     controller.onEvent((event) => {
       events.push(event.kind);
     });
+    const turn = controller.runTurn({ event: "user" });
 
     fake.stdout.write(
       `${JSON.stringify({
@@ -147,6 +157,8 @@ describe("AgyProcessController", () => {
     await immediate();
 
     expect(events).toEqual(["step_update", "unknown"]);
+    fake.stdout.write(resultLine());
+    await turn;
   });
 
   it("fails once on malformed stdout after init", async () => {
@@ -393,6 +405,7 @@ describe("AgyProcessController output backpressure", () => {
         await gate;
       }
     });
+    const turn = controller.runTurn({ event: "user" });
 
     fake.stdout.write(stepLine(0, "first"));
     await immediate();
@@ -407,6 +420,8 @@ describe("AgyProcessController output backpressure", () => {
     await immediate();
     expect(seen).toEqual([0, 1]);
     expect(fake.stdout.isPaused()).toBe(false);
+    fake.stdout.write(resultLine());
+    await turn;
   });
 
   it("handles listener rejection immediately and terminates once", async () => {
@@ -415,13 +430,96 @@ describe("AgyProcessController output backpressure", () => {
     const failures: AgyProcessControllerError[] = [];
     controller.onFailure((error) => failures.push(error));
     controller.onEvent(() => Promise.reject(new Error("downstream failed")));
+    const turn = controller.runTurn({ event: "user" });
+    const turnAssertion = expect(turn).rejects.toMatchObject({
+      code: "EVENT_HANDLER_FAILED",
+    });
 
     fake.stdout.write(stepLine(0, "text"));
     await immediate();
     await immediate();
+    await turnAssertion;
 
     expect(failures).toHaveLength(1);
     expect(failures[0]).toMatchObject({ code: "EVENT_HANDLER_FAILED" });
+    expect(fake.signals).toEqual(["SIGTERM"]);
+  });
+});
+
+describe("AgyProcessController terminal ordering", () => {
+  it("fails an active turn immediately when stdout ends without a result", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+    const turn = controller.runTurn({ event: "user" });
+
+    fake.stdout.end();
+
+    await expect(turn).rejects.toMatchObject({ code: "INVALID_OUTPUT" });
+    expect(fake.signals).toEqual(["SIGTERM"]);
+  });
+
+  it("drains queued stdout after exit before handling child close", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    controller.onEvent(async (event) => {
+      if (event.kind === "step_update") {
+        await gate;
+      }
+    });
+
+    const turn = controller.runTurn({ event: "user" });
+    fake.stdout.write(`${stepLine(0, "text")}${resultLine()}`);
+    await immediate();
+    fake.emitExitOnly(0);
+
+    release();
+    await expect(turn).resolves.toMatchObject({ status: "SUCCESS" });
+    fake.stdout.end();
+    fake.emitClose(0);
+  });
+
+  it("retires the controller after stdin write failure", async () => {
+    class FailingWritable extends Writable {
+      public override _write(
+        _chunk: Buffer,
+        _encoding: BufferEncoding,
+        callback: (error?: Error | null) => void,
+      ): void {
+        callback(new Error("write failed"));
+      }
+    }
+
+    const fake = createFakeProcess(new FailingWritable({ highWaterMark: 1 }));
+    const controller = await startReady(fake);
+    const failures: AgyProcessControllerError[] = [];
+    controller.onFailure((error) => failures.push(error));
+
+    await expect(controller.runTurn({ event: "user" })).rejects.toMatchObject({
+      code: "WRITE_FAILED",
+    });
+    await immediate();
+
+    expect(controller.isClosed).toBe(true);
+    expect(failures).toHaveLength(1);
+    expect(fake.signals).toEqual(["SIGTERM"]);
+  });
+
+  it("rejects a result received while no turn is active", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+    const failures: AgyProcessControllerError[] = [];
+    controller.onFailure((error) => failures.push(error));
+
+    fake.stdout.write(resultLine());
+    await immediate();
+    await immediate();
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ code: "INVALID_OUTPUT" });
     expect(fake.signals).toEqual(["SIGTERM"]);
   });
 });

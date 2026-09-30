@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: stdout EOF/child close ordering, write failure controller retirement, idle/stale event phase를 RED tests로 재현해 ProcessController terminal state machine을 수정합니다.
+- 다음 작업: ACP request AbortSignal을 session cancel에 연결하고 invalid path는 -32602, backend identity mismatch는 -32603으로 구분하며 configurable session admission limit을 RED tests로 구현합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -97,7 +97,12 @@
 - [x] SessionManager 11/11 + ProcessController 13/13, targeted 합계 24/24, failure E2E 6/6, typecheck, lint 통과.
 - [x] Downstream notification backpressure: awaitable event listener와 serialized batch queue를 추가하고 slow consumer 동안 child stdout을 pause/resume합니다. Listener rejection은 즉시 typed failure로 shutdown합니다.
 - [x] Backpressure targeted tests 2/2 포함 전체 unit 57/57, mock E2E 7/7, lint, typecheck, build 통과.
-- [ ] Medium remediation: stdout EOF/child close ordering, write failure retire, event phase invariants, request AbortSignal, path/error mapping, session admission limit.
+- [x] Medium: child `exit`는 stdio drain 전 실패시키지 않고 `close`+event queue barrier에서 처리하며, result 없는 stdout EOF는 즉시 `INVALID_OUTPUT`입니다.
+- [x] Medium: stdin write/drain failure가 controller fatal shutdown·retirement로 이어집니다.
+- [x] Medium: duplicate init, idle step/result, contradictory SUCCESS/error·ERROR/no-error를 fail-close합니다.
+- [x] Terminal ordering/event invariant targeted 31/31, typecheck, lint 통과.
+- [ ] Medium remediation: SDK request AbortSignal, invalid path/backend error mapping, session admission limit, executable absolute resolution, process-tree termination.
+
 
 ## 진행 중
 

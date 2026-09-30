@@ -147,3 +147,30 @@ describe("parseAgyEvent", () => {
     expect(thrown.message).not.toContain(sensitiveValue);
   });
 });
+
+describe("parseAgyEvent result invariants", () => {
+  it.each([
+    ["SUCCESS", "unexpected error"],
+    ["ERROR", null],
+  ] as const)("rejects contradictory %s/error state", (status, error) => {
+    expect(() =>
+      parseAgyEvent({
+        event: "result",
+        result: {
+          conversation_id: "opaque-id",
+          duration_seconds: 1,
+          error,
+          num_turns: 1,
+          response: "text",
+          status,
+          usage: {},
+        },
+      }),
+    ).toThrowError(
+      expect.objectContaining<Partial<AgyEventValidationError>>({
+        code: "INVALID_AGY_EVENT",
+        field: "error",
+      }),
+    );
+  });
+});

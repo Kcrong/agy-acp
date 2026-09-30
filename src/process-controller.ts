@@ -77,6 +77,8 @@ export class AgyProcessController implements ManagedAgyProcess {
   readonly #rejectReady: (error: AgyProcessControllerError) => void;
   #eventQueue: Promise<void> = Promise.resolve();
   #stdoutEnded = false;
+  #processExited = false;
+  #processClosed = false;
   #initTimer: NodeJS.Timeout | undefined;
   #activeTurn: ActiveTurn | undefined;
   #shutdownPromise: Promise<void> | undefined;
@@ -116,6 +118,7 @@ export class AgyProcessController implements ManagedAgyProcess {
     child.stderr.on("data", this.#handleStderr);
     child.on("error", this.#handleProcessError);
     child.on("exit", this.#handleExit);
+    child.on("close", this.#handleClose);
 
     this.#initTimer = setTimeout(() => {
       this.#fail(new AgyProcessControllerError("INIT_TIMEOUT"));
@@ -220,7 +223,7 @@ export class AgyProcessController implements ManagedAgyProcess {
         error instanceof AgyProcessControllerError
           ? error
           : new AgyProcessControllerError("WRITE_FAILED", error);
-      this.#rejectActiveTurn(wrapped);
+      this.#fail(wrapped);
     });
 
     return turn;
@@ -270,6 +273,20 @@ export class AgyProcessController implements ManagedAgyProcess {
     try {
       const events = this.#parser.finish().map(parseAgyEvent);
       this.#queueEvents(events);
+      const pendingEvents = this.#eventQueue;
+      void pendingEvents.then(() => {
+        setImmediate(() => {
+          if (!this.#processClosed && !this.#closed && !this.#failed) {
+            const code = this.#processExited
+              ? "PROCESS_EXITED"
+              : "INVALID_OUTPUT";
+            this.#fail(
+              new AgyProcessControllerError(code),
+              !this.#processExited,
+            );
+          }
+        });
+      });
     } catch (error) {
       this.#fail(new AgyProcessControllerError("INVALID_OUTPUT", error));
     }
@@ -300,16 +317,24 @@ export class AgyProcessController implements ManagedAgyProcess {
   };
 
   readonly #handleExit = (): void => {
-    this.#closed = true;
-    if (this.#shutdownPromise !== undefined) {
-      this.#finalizeShutdown();
-      return;
-    }
+    this.#processExited = true;
+  };
 
-    if (!this.#failed) {
-      this.#fail(new AgyProcessControllerError("PROCESS_EXITED"), false);
-    }
-    this.#cleanupListeners();
+  readonly #handleClose = (): void => {
+    this.#processClosed = true;
+    this.#closed = true;
+    const pendingEvents = this.#eventQueue;
+    void pendingEvents.then(() => {
+      if (this.#shutdownPromise !== undefined) {
+        this.#finalizeShutdown();
+        return;
+      }
+
+      if (!this.#failed) {
+        this.#fail(new AgyProcessControllerError("PROCESS_EXITED"), false);
+      }
+      this.#cleanupListeners();
+    });
   };
 
   #queueEvents(events: readonly AgyEvent[]): void {
@@ -363,6 +388,18 @@ export class AgyProcessController implements ManagedAgyProcess {
     if (
       event.kind !== "unknown" &&
       event.conversationId !== this.#conversationId
+    ) {
+      this.#fail(new AgyProcessControllerError("INVALID_OUTPUT"));
+      return;
+    }
+
+    if (event.kind === "init") {
+      this.#fail(new AgyProcessControllerError("INVALID_OUTPUT"));
+      return;
+    }
+    if (
+      (event.kind === "step_update" || event.kind === "result") &&
+      this.#activeTurn === undefined
     ) {
       this.#fail(new AgyProcessControllerError("INVALID_OUTPUT"));
       return;
@@ -493,6 +530,7 @@ export class AgyProcessController implements ManagedAgyProcess {
     this.#child.stderr.off("data", this.#handleStderr);
     this.#child.off("error", this.#handleProcessError);
     this.#child.off("exit", this.#handleExit);
+    this.#child.off("close", this.#handleClose);
     this.#eventListeners.clear();
     this.#failureListeners.clear();
   }

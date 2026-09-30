@@ -131,6 +131,12 @@ function parseResult(envelope: JsonRecord): AgyResultEvent {
   ) {
     fail("error", eventName);
   }
+  if (status === "SUCCESS" && error !== undefined && error !== null) {
+    fail("error", eventName);
+  }
+  if (status === "ERROR" && (typeof error !== "string" || error.length === 0)) {
+    fail("error", eventName);
+  }
 
   return {
     kind: "result",

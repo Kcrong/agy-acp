@@ -83,6 +83,9 @@ Prompt timeout도 같은 종료 절차를 사용하지만 `cancelled`가 아니�
 - stdout은 chunk 경계를 신뢰하지 않고 newline 기준 bounded parser로 처리합니다.
 - 최대 line bytes, stderr ring bytes, init/prompt/cancel timeout은 중앙 configuration에서 제한합니다.
 - parser error 이후 해당 process의 추가 output은 신뢰하지 않고 종료합니다.
+- Child `exit`는 상태만 기록하고 stdout EOF와 async event queue drain 뒤 `close`를 terminal barrier로 사용합니다. Result 없는 stdout EOF는 즉시 typed failure입니다.
+- Known init/update/result는 `initializing → idle → active → idle` phase에서만 허용하며 idle result와 contradictory status/error를 거부합니다.
+- stdin write/drain failure는 controller 전체를 retire해 다음 prompt가 새 process를 기다리도록 합니다.
 - listener와 timer는 모든 success·error·cancel·disconnect 경로에서 한 번만 정리합니다.
 
 ## 오류와 capability 원칙
