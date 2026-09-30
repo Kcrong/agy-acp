@@ -2,12 +2,12 @@
 
 ## 상태
 
-- 현재 단계: code/merge gates PASS·public history rewrite 승인 대기
+- 현재 단계: feature history rewrite·full local gates PASS·exact-head final review 진행
 - 작업 branch: `feat/agy-acp-bridge`
 - ready PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: machine-specific metadata가 있는 `21334d1`·`adfc153`을 GitHub noreply identity로 rewrite하고 feature branch를 force-update해도 되는지 명시적 승인을 받습니다.
-- 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
+- 다음 작업: rewritten head `4952da9`를 독립 재검토한 뒤 PR을 merge합니다. `main`에 이미 포함된 root `21334d1` metadata는 feature-branch rewrite로 제거할 수 없으므로 public visibility 전 별도 default-history gate로 유지합니다.
+- 완료 조건: current code merge gate, local gate, 독립 리뷰, PR merge 완료. Public release gate는 별도로 추적합니다.
 
 ## 조사 메모
 
@@ -76,7 +76,8 @@
 - [x] 실제 package tarball을 session scratch clean project에 설치하고 packaged `agy-acp` bin→fake child ACP smoke를 통과했습니다.
 - [x] Tracked files, patch history, installed package의 credential·machine-path content scan은 clean입니다.
 - [x] Hosted CI run 36696258541의 Linux/macOS/Windows 4개 job 모두 `runner_id=0`, steps `[]`로 runner allocation 전에 실패해 Actions 사용량 소진임을 확인했습니다.
-- [ ] Root `21334d1`과 review tip `adfc153`의 author/committer metadata에 machine-specific identity가 있습니다. Public 전 coordinated history rewrite에는 명시적 승인이 필요합니다.
+- [x] Feature range의 machine-derived metadata는 `adfc153`을 GitHub noreply identity로 rewrite한 뒤 scan clean을 확인했습니다.
+- [ ] Inherited `main` root `21334d1`의 machine-derived metadata는 feature branch만 rewrite해서 제거할 수 없습니다. Public visibility 전 별도 default-history rewrite 승인이 필요합니다.
 
 ## 독립 리뷰 1차 결과
 
@@ -152,8 +153,10 @@
 - [x] `a20c806` final focused public current-merge review: Critical 0, High 0, Medium 0, Low 0 — PASS.
 - [x] Exact-head Actions run `36710939730`의 Ubuntu Node 22/24, macOS 22, Windows 22 모두 `runner_id=0`, steps `0`로 allocation 전 quota failure임을 확인했습니다.
 - [x] [PR #2](https://github.com/Kcrong/agy-acp/pull/2) 본문을 unit 94/94, mock E2E 8/8, package/real smoke, final review, exact-head hosted quota evidence로 갱신하고 ready로 전환했습니다.
-- [ ] Publication history gate: `21334d1`·`adfc153` machine-specific author/committer metadata rewrite와 feature-branch force-update에 explicit approval이 필요합니다.
-- [ ] Approval 후 rewritten exact head에서 history/package rescan, full local gates, independent final review, PR ready/merge를 수행합니다.
+- [x] Feature history gate: explicit approval 후 `adfc153` author/committer를 GitHub noreply identity로 rewrite하고 old head `3ea09d1` lease로 feature branch만 force-update했습니다.
+- [x] Rewritten head `4952da9`에서 final tree 동일성, 37-commit order/message/date 보존, feature identity scan clean, full local gate, package smoke, real `agy` smoke를 재검증했습니다.
+- [ ] Rewritten exact head independent final review와 PR merge를 수행합니다.
+- [ ] Public-only inherited-root gate: `main`의 root `21334d1` metadata는 public visibility 전에 별도 default-history rewrite 결정이 필요합니다.
 
 
 ## 진행 중
@@ -174,7 +177,7 @@
 - [x] 실제 agy ACP smoke
 - [x] 공개 배포 문서·metadata·CI
 - [x] clean package install·content scan·hosted CI
-- [ ] 독립 리뷰·history metadata 결정·PR 완료
+- [ ] Rewritten exact-head 독립 리뷰·PR merge
 
 ## 대기
 

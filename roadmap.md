@@ -70,7 +70,8 @@
 - [x] session scratch의 clean directory에 package를 설치해 `agy-acp` executable smoke를 수행합니다.
 - [x] Linux·macOS·Windows를 대상으로 GitHub Actions workflow를 작성합니다.
 - [x] Actions 사용량 소진으로 실행 전 실패하면 원인과 local 검증 결과를 PR에 기록합니다.
-- [ ] 공개 전 repository history와 package contents에 secret·token·machine-specific path가 없음을 검사합니다.
+- [x] PR-introduced history와 package contents에 secret·token·machine-specific path가 없음을 검사합니다.
+- [ ] Public visibility 전 inherited `main` root `21334d1`의 machine-derived Git identity를 별도 default-history rewrite로 정리합니다. 이 항목은 current code merge와 분리된 public-release gate입니다.
 
 ## 7. 완료 게이트
 
