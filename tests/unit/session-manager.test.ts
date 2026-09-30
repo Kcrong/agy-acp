@@ -573,3 +573,66 @@ describe("SessionManager retirement cancellation precedence", () => {
     expect(controllers).toHaveLength(1);
   });
 });
+
+describe("SessionManager retirement rejection cancellation precedence", () => {
+  it("returns cancellation when an aborted retirement wait rejects", async () => {
+    const original = new DeferredController("session-1");
+    const controllers: FakeController[] = [];
+    const manager = new SessionManager({ limits: LIMITS }, (invocation) => {
+      const controller =
+        controllers.length === 0
+          ? original
+          : new FakeController(invocation.conversationId ?? "unexpected");
+      controllers.push(controller);
+      return Promise.resolve(controller);
+    });
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    const firstPrompt = manager.prompt(sessionId, { event: "first" });
+    await Promise.resolve();
+
+    const cancelling = manager.cancel(sessionId);
+    await expect(firstPrompt).rejects.toMatchObject({ code: "CANCELLED" });
+    const queuedPrompt = manager.prompt(sessionId, { event: "queued" });
+    await Promise.resolve();
+    const closing = manager.closeSession(sessionId);
+    const assertions = Promise.all([
+      expect(cancelling).rejects.toThrow("retirement failed"),
+      expect(queuedPrompt).rejects.toMatchObject({ code: "CANCELLED" }),
+      expect(closing).rejects.toThrow("retirement failed"),
+    ]);
+
+    original.retirement.reject(new Error("retirement failed"));
+    await assertions;
+    expect(controllers).toHaveLength(1);
+    expect(manager.size).toBe(0);
+  });
+});
+
+describe("SessionManager startup rejection cancellation precedence", () => {
+  it("returns cancellation when an aborted lazy startup rejects", async () => {
+    const initial = new FakeController("session-1");
+    const startup = deferred<ManagedAgyProcess>();
+    let calls = 0;
+    const manager = new SessionManager({ limits: LIMITS }, () => {
+      calls += 1;
+      return calls === 1 ? Promise.resolve(initial) : startup.promise;
+    });
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    initial.emitFailure(new AgyProcessControllerError("PROCESS_EXITED"));
+    await Promise.resolve();
+
+    const prompting = manager.prompt(sessionId, { event: "restart" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toBe(2);
+    const closing = manager.closeSession(sessionId);
+    const assertions = Promise.all([
+      expect(prompting).rejects.toMatchObject({ code: "CANCELLED" }),
+      expect(closing).resolves.toBeUndefined(),
+    ]);
+
+    startup.reject(new Error("startup failed"));
+    await assertions;
+    expect(manager.size).toBe(0);
+  });
+});
