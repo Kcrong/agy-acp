@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+*.log
+*.tgz
+.env
+.env.*
+!.env.example
+.DS_Store
+.kiro/settings/cli.json
+.kiro/settings/.kirocrew-cli-settings.lock

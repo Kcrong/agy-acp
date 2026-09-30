@@ -28,11 +28,11 @@
 
 ## 2. 프로젝트 기반 구축
 
-- [ ] Node.js 24 + TypeScript strict ESM 프로젝트를 구성합니다.
-- [ ] 의존성은 정확한 버전으로 고정하고 lockfile을 commit합니다.
-- [ ] `agy-acp` executable entry point와 package `bin`을 구성합니다.
-- [ ] typecheck, lint, unit test, E2E test, build 명령을 구성합니다.
-- [ ] 메시지 크기, line 길이, timeout 등 안전 한도를 중앙 설정으로 둡니다.
+- [x] Node.js 24 + TypeScript strict ESM 프로젝트를 구성합니다.
+- [x] 의존성은 정확한 버전으로 고정하고 lockfile을 commit합니다.
+- [x] `agy-acp` executable entry point와 package `bin`을 구성합니다.
+- [x] typecheck, lint, unit test, E2E test, build 명령을 구성합니다.
+- [x] 메시지 크기, line 길이, timeout 등 안전 한도를 중앙 설정으로 둡니다.
 
 ## 3. `agy` process bridge 구현
 

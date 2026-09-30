@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: 프로젝트 기반 구축
+- 현재 단계: `agy` process bridge 구현
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: Node·SDK engine 호환성을 확인하고 TypeScript strict ESM scaffold와 pinned dependency·test/build 명령을 구성합니다.
+- 다음 작업: bounded NDJSON parser의 정상·분할 chunk·oversized line·malformed JSON RED unit test와 구현을 추가합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -39,13 +39,17 @@
 - [x] 공식 SDK 1.5.1의 19개 request·8개 notification을 필수·선택·미지원으로 분류해 `docs/acp-v1-contract.md`에 기록했습니다.
 - [x] 향후 public repository·npm 배포를 전제로 maintained Node LTS, 다중 OS, clean-install, package 보안 검증 항목을 roadmap에 추가했습니다.
 - [x] ACP↔`agy` 변환, session 격리, cancel·timeout·종료, backpressure, typed error 정책을 `docs/bridge-design.md`에 확정했습니다.
+- [x] Node `>=22.13.0`, TypeScript `5.9.3`, ACP SDK `1.5.1`, Vitest `5.0.2`, ESLint `10.11.0` 기반 strict ESM scaffold와 exact lockfile을 구성했습니다.
+- [x] ESLint type-aware config를 TypeScript 파일로 제한해 자체 JavaScript config parsing 실패를 수정했습니다.
+- [x] `npm run check`: lint, typecheck, unit 2/2, E2E command, build 통과.
 
 ## 진행 중
 
 - [x] `agy` stream-json protocol fixture 수집
 - [x] ACP v1 method·capability 목록 확정
 - [x] ACP↔`agy` 변환 계약 작성
-- [ ] TypeScript strict ESM project scaffold
+- [x] TypeScript strict ESM project scaffold
+- [ ] bounded NDJSON parser
 
 ## 대기
 
