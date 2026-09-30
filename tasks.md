@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: ACP agent 구현
+- 현재 단계: 공개 배포·사용 문서와 CI
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: 설치된 실제 `agy 1.2.14`를 `agy-acp` stdio CLI 뒤에서 실행해 최소 ACP initialize→new→prompt→close smoke를 수행하되 응답·ID·usage·자격 증명은 출력하지 않습니다.
+- 다음 작업: README 설치·ACP client 설정·호환성·troubleshooting, package metadata/license, CONTRIBUTING·SECURITY, multi-OS GitHub Actions를 작성합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -64,6 +64,10 @@
 - [x] fake `agy`의 split·malformed·early-exit·hang/SIGTERM modes와 단계별 3초 fail-fast E2E cleanup을 구현했습니다.
 - [x] Split streaming, malformed JSON, 조기 exit, prompt timeout, cancellation, 두 session 동시 실행 E2E 6/6을 통과했습니다.
 - [x] `npm run check`: unit 50/50, 전체 E2E 7/7, lint, typecheck, build 통과. 각 test가 CLI/fake child exit를 확인했습니다.
+- [x] Opt-in 실제 `agy` smoke를 추가해 응답은 trim 후 SHA-256만 비교하고 stderr는 byte 수만 집계하며 ID·usage·환경값은 출력하지 않도록 했습니다.
+- [x] 최초 real smoke에서 `SUCCESS` result의 `error` key 생략을 발견해 parser가 `null`로 normalize하도록 regression을 추가했습니다.
+- [x] 실제 `agy 1.2.14` ACP initialize→new→prompt→close smoke 1/1 통과, CLI와 child 정상 종료, 응답 hash 일치.
+- [x] Real regression 반영 후 `npm run check`: unit 50/50, mock E2E 7/7, lint, typecheck, build 통과. Real smoke는 opt-in으로 별도 1/1 통과.
 
 ## 진행 중
 
@@ -80,7 +84,8 @@
 - [x] ACP AgentApp baseline handlers
 - [x] stdio CLI와 fake-agy normal E2E
 - [x] failure·cancel·concurrent E2E matrix
-- [ ] 실제 agy ACP smoke
+- [x] 실제 agy ACP smoke
+- [ ] 공개 배포 문서·metadata·CI
 
 ## 대기
 

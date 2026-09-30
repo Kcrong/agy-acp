@@ -61,7 +61,7 @@ describe("parseAgyEvent", () => {
           result: {
             conversation_id: "opaque-id",
             duration_seconds: 1,
-            error: status === "ERROR" ? "failed" : null,
+            ...(status === "ERROR" ? { error: "failed" } : {}),
             num_turns: 1,
             response: "result text",
             status,

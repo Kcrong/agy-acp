@@ -57,9 +57,9 @@
 - [x] parser, event mapping, session manager, error mapping, cancellation unit test를 작성합니다.
 - [x] fake `agy`를 이용한 ACP client-to-process mock E2E harness를 작성합니다.
 - [x] 정상 streaming, 분할 JSON, malformed JSON, 조기 종료, timeout, 취소, 동시 session을 E2E로 검증합니다.
-- [ ] 설치된 실제 `agy`로 자격 증명을 노출하지 않는 최소 smoke E2E를 통과시킵니다.
+- [x] 설치된 실제 `agy`로 자격 증명을 노출하지 않는 최소 smoke E2E를 통과시킵니다.
 - [x] open handle과 child process 누수가 없음을 검증합니다.
-- [ ] local typecheck, lint, unit, mock E2E, build를 모두 통과시킵니다.
+- [x] local typecheck, lint, unit, mock E2E, build를 모두 통과시킵니다.
 
 ## 6. 공개 배포·사용 문서와 CI
 
@@ -75,7 +75,7 @@
 ## 7. 완료 게이트
 
 - [ ] roadmap의 모든 항목에 검증 증거가 있고 `tasks.md`가 최종 상태를 반영합니다.
-- [ ] 실제 `agy` smoke를 포함한 모든 local gate가 통과합니다.
+- [x] 실제 `agy` smoke를 포함한 모든 local gate가 통과합니다.
 - [ ] 독립 코드리뷰에서 Critical·High finding이 0입니다.
 - [ ] Conventional Commits 형식의 영문 PR 제목과 지정된 한국어 본문으로 PR을 생성합니다.
 - [ ] 리뷰 지적을 반영하고 최종 head를 재검증한 뒤 merge합니다.

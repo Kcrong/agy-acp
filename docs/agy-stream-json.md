@@ -72,7 +72,6 @@ text streaming update에는 `text_delta: string`이 추가됩니다. 완료 upda
   "result": {
     "conversation_id": "<opaque>",
     "duration_seconds": 0,
-    "error": null,
     "num_turns": 1,
     "response": "<final text>",
     "status": "SUCCESS",
@@ -81,7 +80,7 @@ text streaming update에는 `text_delta: string`이 추가됩니다. 완료 upda
 }
 ```
 
-실제 최소 turn에서 whitespace를 제거한 `response`가 요청한 고정 문자열과 일치했고 `status=SUCCESS`였습니다.
+실제 최소 turn에서 whitespace를 제거한 `response`가 요청한 고정 문자열과 일치했고 `status=SUCCESS`였습니다. `SUCCESS` result에서는 `error` key가 생략될 수 있으며 adapter는 이를 `null`로 normalize합니다. `ERROR` result의 `error`는 문자열입니다.
 
 ## 실패·취소 fixture
 

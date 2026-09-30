@@ -124,7 +124,11 @@ function parseResult(envelope: JsonRecord): AgyResultEvent {
   if (status !== "SUCCESS" && status !== "ERROR") {
     fail("status", eventName);
   }
-  if (error !== null && typeof error !== "string") {
+  if (
+    error !== undefined &&
+    error !== null &&
+    typeof error !== "string"
+  ) {
     fail("error", eventName);
   }
 
@@ -136,7 +140,7 @@ function parseResult(envelope: JsonRecord): AgyResultEvent {
       "duration_seconds",
       eventName,
     ),
-    error,
+    error: error ?? null,
     numTurns: requireNonNegativeInteger(result, "num_turns", eventName),
     response: requireString(result, "response", eventName),
     status,
