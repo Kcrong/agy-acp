@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 
 const REPOSITORY_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+let currentStage = "setup";
 
 async function within(promise, stage, timeoutMs = 10_000) {
   let timer;
@@ -62,7 +63,11 @@ async function runNpm(args, cwd) {
   }
   return run(process.execPath, [npmExecPath, ...args], {
     cwd,
-    env: process.env,
+    env: {
+      ...process.env,
+      NPM_CONFIG_DRY_RUN: "false",
+      npm_config_dry_run: "false",
+    },
   });
 }
 
@@ -212,9 +217,11 @@ async function main() {
     await mkdir(packDirectory);
     await mkdir(consumerDirectory);
 
+    currentStage = "pack";
     const packed = await runNpm(
       [
         "pack",
+        "--dry-run=false",
         "--ignore-scripts",
         "--json",
         "--pack-destination",
@@ -222,6 +229,7 @@ async function main() {
       ],
       REPOSITORY_ROOT,
     );
+    currentStage = "inspect";
     const packResult = JSON.parse(packed.stdout)[0];
     const paths = new Set(packResult.files.map((file) => file.path));
     for (const required of ["LICENSE", "README.md", "SECURITY.md", "package.json"]){
@@ -243,6 +251,7 @@ async function main() {
       }),
     );
     const tarball = join(packDirectory, packResult.filename);
+    currentStage = "install";
     await runNpm(
       [
         "install",
@@ -262,7 +271,9 @@ async function main() {
       "@kcrong",
       "agy-acp",
     );
+    currentStage = "import";
     await verifyImport(consumerDirectory);
+    currentStage = "cli";
     await verifyPackagedCli(consumerDirectory, packageRoot);
     process.stdout.write("package-smoke-ok\n");
   } finally {
@@ -271,6 +282,6 @@ async function main() {
 }
 
 void main().catch(() => {
-  process.stderr.write("package-smoke-failed\n");
+  process.stderr.write(`package-smoke-failed:${currentStage}\n`);
   process.exitCode = 1;
 });
