@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: focused public-review Medium 2개 수정 완료·successor 재리뷰 준비
+- 현재 단계: code/merge gates PASS·public history rewrite 승인 대기
 - 작업 branch: `feat/agy-acp-bridge`
-- draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
+- ready PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: rejection-path cancellation과 Windows package environment 수정 commit을 push하고 successor exact head에서 두 finding closure를 확인합니다.
+- 다음 작업: machine-specific metadata가 있는 `21334d1`·`adfc153`을 GitHub noreply identity로 rewrite하고 feature branch를 force-update해도 되는지 명시적 승인을 받습니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -148,7 +148,12 @@
 - [x] Retirement reject 및 lazy startup reject after close regressions를 추가해 cancellation precedence와 session reservation cleanup을 검증했습니다.
 - [x] Package smoke가 expected local `agy-acp`/`agy-acp.cmd` shim 존재를 먼저 검증하고 `PATHEXT`, `ComSpec`, `SystemRoot`, temp/user variables를 포함한 platform environment를 보존합니다.
 - [x] Second remediation 전체 unit 94/94, mock E2E 8/8, lint, typecheck, build, packed clean-install/import/local-bin smoke, 실제 authenticated agy smoke 1/1 통과.
-- [ ] Second successor exact head focused independent re-review.
+- [x] `a20c806` final focused runtime review: Critical 0, High 0, Medium 0, Low 0 — PASS.
+- [x] `a20c806` final focused public current-merge review: Critical 0, High 0, Medium 0, Low 0 — PASS.
+- [x] Exact-head Actions run `36710939730`의 Ubuntu Node 22/24, macOS 22, Windows 22 모두 `runner_id=0`, steps `0`로 allocation 전 quota failure임을 확인했습니다.
+- [x] [PR #2](https://github.com/Kcrong/agy-acp/pull/2) 본문을 unit 94/94, mock E2E 8/8, package/real smoke, final review, exact-head hosted quota evidence로 갱신하고 ready로 전환했습니다.
+- [ ] Publication history gate: `21334d1`·`adfc153` machine-specific author/committer metadata rewrite와 feature-branch force-update에 explicit approval이 필요합니다.
+- [ ] Approval 후 rewritten exact head에서 history/package rescan, full local gates, independent final review, PR ready/merge를 수행합니다.
 
 
 ## 진행 중
