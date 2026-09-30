@@ -17,7 +17,7 @@
 
 ## 1. 프로토콜 계약 확정
 
-- [ ] 설치된 `agy`의 stream-json 입력·출력 event를 정상·오류·취소 흐름별 fixture로 확보합니다.
+- [x] 설치된 `agy`의 stream-json 입력·출력 event를 정상·오류·취소 흐름별 fixture로 확보합니다.
 - [ ] ACP v1 필수 method와 선택 capability를 분류합니다.
 - [ ] ACP request/update와 `agy` event 간 변환 표를 작성합니다.
 - [ ] 세션, 동시성, 취소, timeout, process 종료 정책을 결정합니다.
