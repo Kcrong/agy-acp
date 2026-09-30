@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   AgyProcessConfigError,
   buildAgyInvocation,
+  signalAgyProcessTree,
   spawnAgyProcess,
 } from "../../src/agy-process.js";
 import type { AgySpawnFunction } from "../../src/agy-process.js";
@@ -93,12 +94,53 @@ describe("spawnAgyProcess", () => {
         ],
         {
           cwd: "/workspace",
+          detached: true,
           env,
           shell: false,
           stdio: "pipe",
           windowsHide: true,
         },
       ],
+    ]);
+  });
+});
+
+describe("signalAgyProcessTree", () => {
+  it("signals the detached POSIX process group", () => {
+    const directSignals: NodeJS.Signals[] = [];
+    const groupSignals: Array<[number, NodeJS.Signals]> = [];
+    const child = {
+      pid: 4321,
+      kill(signal: NodeJS.Signals) {
+        directSignals.push(signal);
+        return true;
+      },
+    } as ChildProcessWithoutNullStreams;
+
+    signalAgyProcessTree(child, "SIGTERM", {
+      platform: "linux",
+      signalGroup: (pid, signal) => groupSignals.push([pid, signal]),
+    });
+
+    expect(groupSignals).toEqual([[-4321, "SIGTERM"]]);
+    expect(directSignals).toEqual([]);
+  });
+
+  it("uses the Windows tree terminator with force only for SIGKILL", () => {
+    const calls: Array<[number, boolean]> = [];
+    const child = { pid: 1234, kill: () => true } as ChildProcessWithoutNullStreams;
+    const options = {
+      platform: "win32" as const,
+      signalWindowsTree: (pid: number, force: boolean) =>
+        calls.push([pid, force]),
+    };
+
+    signalAgyProcessTree(child, "SIGTERM", options);
+    signalAgyProcessTree(child, "SIGKILL", options);
+
+    expect(calls).toEqual([
+      [1234, false],
+      [1234, true],
     ]);
   });
 });

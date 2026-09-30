@@ -108,7 +108,7 @@ Prompt input supports ACP Text and ResourceLink blocks. Image, audio, embedded r
 
 | Variable | Default | Purpose |
 |---|---:|---|
-| `AGY_ACP_AGY_PATH` | `agy` | Antigravity executable name or path |
+| `AGY_ACP_AGY_PATH` | `agy` | Bare command resolved once from absolute `PATH` entries, or an absolute executable path |
 | `AGY_ACP_MAX_LINE_BYTES` | `4194304` | Maximum ACP/NDJSON line size |
 | `AGY_ACP_MAX_STDERR_BYTES` | `65536` | Maximum retained diagnostic bytes per process |
 | `AGY_ACP_MAX_SESSIONS` | `16` | Maximum active plus starting sessions |
@@ -126,6 +126,8 @@ The command-line `--agy-path` option takes precedence over `AGY_ACP_AGY_PATH`.
 - `agy-acp` inherits the caller environment so `agy` can use its existing login. Environment variables are never enumerated or logged.
 - The adapter does not enable `--dangerously-skip-permissions`.
 - User-controlled paths and identifiers are passed as literal argv entries with `shell: false`.
+- The `agy` executable is resolved to an absolute realpath before any client-provided working directory is accepted; relative path values are rejected.
+- Cancellation targets the detached POSIX process group or Windows process tree, then applies a bounded hard-kill deadline.
 - Conversation IDs, token usage, stderr contents, and prompt text are excluded from default diagnostics.
 - No telemetry or network service is added by the adapter. Network requests are made only by `agy` itself.
 

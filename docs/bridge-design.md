@@ -98,7 +98,9 @@ Prompt timeout도 같은 종료 절차를 사용하지만 `cancelled`가 아니�
 - SDK `$/cancel_request` AbortSignal은 동일 session cancel에 연결하고 `RequestError.requestCancelled`로 응답합니다.
 - Client path/config 오류는 `Invalid params`, backend identity/manager 오류는 `Internal error`, capacity 초과는 bounded server error로 구분합니다.
 - stderr 원문, command environment, credential, conversation ID는 기본 오류 메시지에 포함하지 않습니다.
-- `agy`는 argv 배열과 `shell: false`로 실행하고 caller environment는 상속하되 열거하거나 로그로 출력하지 않습니다.
+- `agy`는 server startup에서 absolute PATH entry 또는 absolute configured path로만 resolve하고 realpath를 고정한 뒤 `shell: false`로 실행합니다. Client `cwd`는 executable resolution에 영향을 주지 않습니다.
+- POSIX에서는 detached process group 전체에 signal을 보내고, Windows에서는 absolute system `taskkill.exe /T` strategy로 process tree를 종료합니다.
+- Caller environment는 상속하되 열거하거나 로그로 출력하지 않습니다.
 
 ## 완료 검증
 

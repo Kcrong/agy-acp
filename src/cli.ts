@@ -11,6 +11,7 @@ import {
 } from "./config.js";
 import { SessionManager } from "./session-manager.js";
 
+import { resolveAgyExecutable } from "./executable.js";
 export interface AgyAcpServerOptions {
   readonly input: Readable;
   readonly output: Writable;
@@ -24,9 +25,13 @@ export async function runAgyAcpServer(
   options: AgyAcpServerOptions,
 ): Promise<void> {
   const limits = options.limits ?? runtimeLimitsFromEnv(options.env);
+  const executable = resolveAgyExecutable(
+    options.agyPath ?? options.env.AGY_ACP_AGY_PATH ?? "agy",
+    options.env,
+  );
   const manager = new SessionManager({
     limits,
-    executable: options.agyPath ?? options.env.AGY_ACP_AGY_PATH ?? "agy",
+    executable,
     env: options.env,
   });
   const stream = ndJsonStream(

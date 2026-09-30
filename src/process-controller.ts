@@ -8,6 +8,7 @@ import {
 } from "./agy-events.js";
 import {
   AgyProcessConfigError,
+  signalAgyProcessTree,
   spawnAgyProcess,
   type AgyInvocationOptions,
   type AgySpawnFunction,
@@ -503,7 +504,7 @@ export class AgyProcessController implements ManagedAgyProcess {
 
   #sendSignal(signal: NodeJS.Signals): void {
     try {
-      this.#child.kill(signal);
+      signalAgyProcessTree(this.#child, signal);
     } catch {
       // A concurrent exit is equivalent to successful termination.
     }

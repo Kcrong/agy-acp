@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: server startup에서 `agy` executable을 absolute path로 resolve하고 POSIX process group·Windows tree-kill abstraction을 RED tests로 구현합니다.
+- 다음 작업: fake E2E를 Windows에서도 shell 없이 실행 가능하게 만들고 SECURITY package inclusion, npm 10/11 계약, unknown-event 문서를 수정한 뒤 독립 재리뷰합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -105,7 +105,10 @@
 - [x] Medium/Low: relative path/config는 `-32602`, backend identity/manager fault는 `-32603`, capacity는 bounded server error로 분류합니다. Backend error text로 cancel을 추론하지 않습니다.
 - [x] Medium: 기본 16개의 active+starting session admission limit과 `AGY_ACP_MAX_SESSIONS` override를 추가했습니다.
 - [x] Request/admission/error targeted 23/23, relative cwd real CLI E2E regression 추가.
-- [ ] Medium remediation: executable absolute resolution과 POSIX/Windows process-tree termination.
+- [x] Medium: server startup에서 bare `agy`를 absolute PATH entry로 resolve하고 configured relative path를 거부하며 realpath를 session cwd 이전에 고정합니다.
+- [x] Medium: POSIX detached process group signal과 Windows absolute `taskkill.exe /T` tree strategy를 구현했습니다.
+- [x] Executable/tree targeted 35/35, 전체 unit 76/76, mock E2E 8/8, real agy 1/1, lint, typecheck, build 통과.
+- [ ] Public/Low remediation: Windows fake E2E portability, packed SECURITY link, npm version contract, unknown-event 문서.
 
 
 ## 진행 중

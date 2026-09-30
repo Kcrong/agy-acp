@@ -47,3 +47,10 @@ export type {
 } from "./session-manager.js";
 export { createAgyAgent, promptToAgyInput } from "./acp-agent.js";
 export type { AgySessionService, AgyUserInput } from "./acp-agent.js";
+export {
+  AgyExecutableResolutionError,
+  resolveAgyExecutable,
+} from "./executable.js";
+export type { ExecutableResolverOptions } from "./executable.js";
+export { signalAgyProcessTree } from "./agy-process.js";
+export type { AgyProcessTreeSignalOptions } from "./agy-process.js";

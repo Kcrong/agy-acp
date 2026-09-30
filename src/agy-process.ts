@@ -1,8 +1,9 @@
 import {
+  execFile,
   spawn as nodeSpawn,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
-import { isAbsolute } from "node:path";
+import { isAbsolute, win32 } from "node:path";
 
 export interface AgyInvocationOptions {
   readonly cwd: string;
@@ -20,6 +21,7 @@ export interface AgyInvocation {
 
 export interface AgySpawnOptions {
   readonly cwd: string;
+  readonly detached: boolean;
   readonly env: NodeJS.ProcessEnv;
   readonly shell: false;
   readonly stdio: "pipe";
@@ -87,11 +89,60 @@ export function spawnAgyProcess(
 
   return spawn(invocation.command, invocation.args, {
     cwd: invocation.cwd,
+    detached: process.platform !== "win32",
     env: options.env ?? process.env,
     shell: false,
     stdio: "pipe",
     windowsHide: true,
   });
+}
+
+export interface AgyProcessTreeSignalOptions {
+  readonly platform?: NodeJS.Platform;
+  readonly signalGroup?: (pid: number, signal: NodeJS.Signals) => void;
+  readonly signalWindowsTree?: (pid: number, force: boolean) => void;
+}
+
+export function signalAgyProcessTree(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals,
+  options: AgyProcessTreeSignalOptions = {},
+): void {
+  const pid = child.pid;
+  if (pid === undefined || pid <= 0) {
+    child.kill(signal);
+    return;
+  }
+
+  try {
+    if ((options.platform ?? process.platform) === "win32") {
+      (options.signalWindowsTree ?? defaultSignalWindowsTree)(
+        pid,
+        signal === "SIGKILL",
+      );
+    } else {
+      (options.signalGroup ?? process.kill)(-pid, signal);
+    }
+  } catch {
+    child.kill(signal);
+  }
+}
+
+function defaultSignalWindowsTree(pid: number, force: boolean): void {
+  const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+  const command = win32.join(systemRoot, "System32", "taskkill.exe");
+  const args = ["/PID", String(pid), "/T"];
+  if (force) {
+    args.push("/F");
+  }
+
+  const killer = execFile(
+    command,
+    args,
+    { windowsHide: true },
+    () => undefined,
+  );
+  killer.unref();
 }
 
 function requireAbsolutePath(value: string, field: string): void {
