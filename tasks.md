@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: SDK 1.5.1 fluent `agent()`로 initialize·session/new·prompt·cancel·close handler와 text/resource-link 변환을 RED unit test부터 구현합니다.
+- 다음 작업: Node stdio를 SDK `ndJsonStream`에 연결하는 real CLI entry point와 fake `agy` executable 기반 ACP client-to-process E2E harness를 구현합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -52,6 +52,10 @@
 - [x] Expanded ProcessController targeted 12/12, typecheck, lint 통과.
 - [x] SessionManager에 multi-session controller 격리, opaque ID create/load 검증, duplicate/mismatch 방어, cancel·failure 후 coalesced lazy restart, close/closeAll을 RED test 후 구현했습니다.
 - [x] SessionManager targeted 7/7, 전체 unit 44/44, typecheck, lint, build 통과.
+- [x] SDK `agent()` fluent API로 initialize, new/load/prompt/cancel/close와 disconnect cleanup을 구현했습니다. E2E 전에는 baseline prompt capability만 광고합니다.
+- [x] Text·ResourceLink를 `agy` user event로 변환하고 `text_delta`를 ACP `agent_message_chunk`로 순서대로 streaming합니다.
+- [x] SDK runtime peer `zod 4.6.5`를 public consumer 재현성을 위해 direct exact dependency로 고정했습니다.
+- [x] ACP Agent targeted 4/4, 전체 unit 48/48, typecheck, lint, build 통과.
 
 ## 진행 중
 
@@ -65,7 +69,8 @@
 - [x] ProcessController init·stream·backpressure
 - [x] ProcessController cancel·timeout·cleanup
 - [x] SessionManager isolation·lifecycle
-- [ ] ACP AgentApp baseline handlers
+- [x] ACP AgentApp baseline handlers
+- [ ] stdio CLI와 fake-agy E2E
 
 ## 대기
 

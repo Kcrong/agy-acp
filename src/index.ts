@@ -40,3 +40,5 @@ export type {
   SessionManagerErrorCode,
   SessionManagerOptions,
 } from "./session-manager.js";
+export { createAgyAgent, promptToAgyInput } from "./acp-agent.js";
+export type { AgySessionService, AgyUserInput } from "./acp-agent.js";

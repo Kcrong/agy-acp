@@ -40,17 +40,17 @@
 - [x] 분할 chunk를 견디는 bounded NDJSON parser를 구현합니다.
 - [x] session별 process lifecycle과 표준입출력 backpressure를 관리합니다.
 - [x] 비정상 종료, malformed JSON, stderr, timeout을 typed error로 변환합니다.
-- [ ] ACP 취소를 현재 turn 중단 후 제한 시간 내 process 종료로 연결합니다.
+- [x] ACP 취소를 현재 turn 중단 후 제한 시간 내 process 종료로 연결합니다.
 - [x] 종료 시 child process와 listener를 누수 없이 정리합니다.
 
 ## 4. ACP agent 구현
 
-- [ ] ACP initialize 및 실제 지원 capability 협상을 구현합니다.
-- [ ] session 생성과 고유 ID·working directory 관리를 구현합니다.
-- [ ] prompt를 `agy` input으로 변환하고 응답을 ACP streaming update로 전달합니다.
-- [ ] 세션 취소와 client disconnect 정리를 구현합니다.
+- [x] ACP initialize 및 실제 지원 capability 협상을 구현합니다.
+- [x] session 생성과 고유 ID·working directory 관리를 구현합니다.
+- [x] prompt를 `agy` input으로 변환하고 응답을 ACP streaming update로 전달합니다.
+- [x] 세션 취소와 client disconnect 정리를 구현합니다.
 - [ ] 여러 ACP session이 한 연결에서 독립적으로 동작하도록 구현합니다.
-- [ ] ACP JSON-RPC error code와 사용자용 오류 메시지를 안정적으로 반환합니다.
+- [x] ACP JSON-RPC error code와 사용자용 오류 메시지를 안정적으로 반환합니다.
 
 ## 5. 신뢰성 테스트
 

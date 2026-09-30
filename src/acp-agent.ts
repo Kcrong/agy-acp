@@ -1,0 +1,256 @@
+import {
+  agent,
+  methods,
+  PROTOCOL_VERSION,
+  RequestError,
+  type AgentApp,
+  type ContentBlock,
+} from "@agentclientprotocol/sdk";
+
+import type { AgyEvent, AgyResultEvent } from "./agy-events.js";
+import { AgyProcessControllerError } from "./process-controller.js";
+import {
+  SessionManagerError,
+  type CreateSessionOptions,
+  type LoadSessionOptions,
+} from "./session-manager.js";
+
+export interface AgySessionService {
+  createSession(options: CreateSessionOptions): Promise<string>;
+  loadSession(options: LoadSessionOptions): Promise<string>;
+  prompt(
+    sessionId: string,
+    input: unknown,
+    onEvent?: (event: AgyEvent) => void,
+  ): Promise<AgyResultEvent>;
+  cancel(sessionId: string): Promise<void>;
+  closeSession(sessionId: string): Promise<void>;
+  closeAll(): Promise<void>;
+}
+
+export interface AgyUserInput {
+  readonly event: "user";
+  readonly message: {
+    readonly role: "user";
+    readonly content: readonly [
+      {
+        readonly type: "text";
+        readonly text: string;
+      },
+    ];
+  };
+}
+
+export function createAgyAgent(service: AgySessionService): AgentApp {
+  return agent({ name: "agy-acp" })
+    .onConnect((connection) => {
+      connection.signal.addEventListener(
+        "abort",
+        () => {
+          void service.closeAll().catch(() => undefined);
+        },
+        { once: true },
+      );
+    })
+    .onRequest(methods.agent.initialize, ({ params }) => ({
+      protocolVersion:
+        params.protocolVersion === PROTOCOL_VERSION
+          ? params.protocolVersion
+          : PROTOCOL_VERSION,
+      agentCapabilities: {
+        promptCapabilities: {},
+      },
+      agentInfo: {
+        name: "agy-acp",
+        version: "0.0.0-development",
+      },
+    }))
+    .onRequest(methods.agent.session.new, async ({ params }) => {
+      rejectMcpServers(params.mcpServers);
+      const sessionId = await mapRequestError(() =>
+        service.createSession(createOptions(params)),
+      );
+      return { sessionId };
+    })
+    .onRequest(methods.agent.session.load, async ({ params }) => {
+      rejectMcpServers(params.mcpServers);
+      await mapRequestError(() => service.loadSession(loadOptions(params)));
+      return {};
+    })
+    .onRequest(methods.agent.session.close, async ({ params }) => {
+      await mapRequestError(() => service.closeSession(params.sessionId));
+    })
+    .onNotification(methods.agent.session.cancel, async ({ params }) => {
+      try {
+        await service.cancel(params.sessionId);
+      } catch (error) {
+        if (
+          !(error instanceof SessionManagerError) ||
+          error.code !== "UNKNOWN_SESSION"
+        ) {
+          throw toRequestError(error);
+        }
+      }
+    })
+    .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
+      const input = promptToAgyInput(params.prompt);
+      let updates = Promise.resolve();
+      let sentText = false;
+
+      try {
+        const result = await service.prompt(
+          params.sessionId,
+          input,
+          (event) => {
+            if (
+              event.kind !== "step_update" ||
+              event.textDelta === undefined ||
+              event.textDelta.length === 0
+            ) {
+              return;
+            }
+
+            sentText = true;
+            updates = updates.then(() =>
+              client.notify(methods.client.session.update, {
+                sessionId: params.sessionId,
+                update: {
+                  sessionUpdate: "agent_message_chunk",
+                  content: { type: "text", text: event.textDelta as string },
+                },
+              }),
+            );
+          },
+        );
+
+        if (
+          result.status === "SUCCESS" &&
+          !sentText &&
+          result.response.length > 0
+        ) {
+          updates = updates.then(() =>
+            client.notify(methods.client.session.update, {
+              sessionId: params.sessionId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: result.response },
+              },
+            }),
+          );
+        }
+        await updates;
+
+        if (result.status === "SUCCESS") {
+          return { stopReason: "end_turn" };
+        }
+        if (result.error?.toLowerCase().includes("context canceled") === true) {
+          return { stopReason: "cancelled" };
+        }
+        throw RequestError.internalError(undefined, "agy execution failed");
+      } catch (error) {
+        await updates;
+        if (
+          error instanceof AgyProcessControllerError &&
+          error.code === "CANCELLED"
+        ) {
+          return { stopReason: "cancelled" };
+        }
+        throw toRequestError(error);
+      }
+    });
+}
+
+export function promptToAgyInput(
+  blocks: readonly ContentBlock[],
+): AgyUserInput {
+  const parts: string[] = [];
+
+  for (const block of blocks) {
+    switch (block.type) {
+      case "text":
+        if (block.text.length > 0) {
+          parts.push(block.text);
+        }
+        break;
+      case "resource_link":
+        parts.push(`Resource: ${block.name} (${block.uri})`);
+        break;
+      case "image":
+      case "audio":
+      case "resource":
+        throw RequestError.invalidParams(
+          undefined,
+          `Unsupported prompt content type: ${block.type}`,
+        );
+    }
+  }
+
+  const text = parts.join("\n\n");
+  if (text.length === 0) {
+    throw RequestError.invalidParams(undefined, "Prompt must contain content");
+  }
+
+  return {
+    event: "user",
+    message: {
+      role: "user",
+      content: [{ type: "text", text }],
+    },
+  };
+}
+
+function rejectMcpServers(mcpServers: readonly unknown[]): void {
+  if (mcpServers.length > 0) {
+    throw RequestError.invalidParams(
+      undefined,
+      "Client-provided MCP servers are not supported",
+    );
+  }
+}
+
+function createOptions(params: {
+  readonly cwd: string;
+  readonly additionalDirectories?: string[];
+}): CreateSessionOptions {
+  return params.additionalDirectories === undefined
+    ? { cwd: params.cwd }
+    : {
+        cwd: params.cwd,
+        additionalDirectories: params.additionalDirectories,
+      };
+}
+
+function loadOptions(params: {
+  readonly cwd: string;
+  readonly sessionId: string;
+  readonly additionalDirectories?: string[];
+}): LoadSessionOptions {
+  return params.additionalDirectories === undefined
+    ? { cwd: params.cwd, sessionId: params.sessionId }
+    : {
+        cwd: params.cwd,
+        sessionId: params.sessionId,
+        additionalDirectories: params.additionalDirectories,
+      };
+}
+
+async function mapRequestError<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw toRequestError(error);
+  }
+}
+
+function toRequestError(error: unknown): RequestError {
+  if (error instanceof RequestError) {
+    return error;
+  }
+  if (error instanceof SessionManagerError) {
+    return RequestError.invalidParams(undefined, error.message);
+  }
+  if (error instanceof AgyProcessControllerError) {
+    return RequestError.internalError(undefined, error.message);
+  }
+  return RequestError.internalError(undefined, "agy-acp request failed");
+}
