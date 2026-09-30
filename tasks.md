@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: rebased-head review findings 수정·full local gates PASS·focused re-review 준비
+- 현재 단계: rebased-head remediation·full local gates·focused review PASS, PR merge ready
 - 작업 branch: `feat/agy-acp-bridge`
 - ready PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: shutdown/restart/documentation remediation exact head를 focused 독립 재검토한 뒤 PR을 merge합니다. `main`에 이미 포함된 root `21334d1` metadata는 public visibility 전 별도 default-history gate로 유지합니다.
+- 다음 작업: final status-only commit을 확인하고 reviewed PR head를 merge합니다. `main`에 이미 포함된 root `21334d1` metadata는 public visibility 전 별도 default-history gate로 유지합니다.
 - 완료 조건: current code merge gate, local gate, 독립 리뷰, PR merge 완료. Public release gate는 별도로 추적합니다.
 
 ## 조사 메모
@@ -161,7 +161,8 @@
 - [x] RED 4건으로 async Windows terminator, direct-child close, post-kill grace, exit-before-close prompt를 재현했습니다.
 - [x] Awaitable bounded tree signal, immediate SIGTERM→SIGKILL→post-kill cleanup barrier, exit-unavailable state를 구현하고 contributor/roadmap 문서를 English contract로 통일했습니다.
 - [x] Remediation 전체 unit 98/98, mock E2E 8/8, package smoke, real `agy` 1/1, lint, typecheck, build를 통과했습니다.
-- [ ] Remediation exact head focused independent review와 PR merge를 수행합니다.
+- [x] Remediation exact head `ed119b6` focused independent review: Critical 0, High 0, Medium 0, Low 0 — PASS.
+- [x] Current code merge scope의 rebase, local validation, package/real smoke, history scan, review remediation과 final review evidence가 완료됐습니다. GitHub merge state는 PR record로 확인합니다.
 - [ ] Public-only inherited-root gate: `main`의 root `21334d1` metadata는 public visibility 전에 별도 default-history rewrite 결정이 필요합니다.
 
 
@@ -183,7 +184,7 @@
 - [x] 실제 agy ACP smoke
 - [x] 공개 배포 문서·metadata·CI
 - [x] clean package install·content scan·hosted CI
-- [ ] Remediation exact-head focused review·PR merge
+- [x] Remediation exact-head focused review·current merge gate
 
 ## 대기
 
