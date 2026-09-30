@@ -6,7 +6,7 @@
 - 작업 branch: `chore/public-release-readiness`
 - merged baseline: PR #2, `main` `343ded8`
 - repository state: PRIVATE. Public visibility 전환과 default-history replacement는 마지막 human-only gate입니다.
-- 다음 작업: PR #4 exact-head Actions allocation을 확인하고 final status-only diff를 검토한 뒤 merge gate를 판단합니다.
+- 다음 작업: final status-only diff를 독립 검토하고 PR #4를 merge한 뒤, hosted quota와 human-only public transition gates를 계속 추적합니다.
 - 완료 조건: secret·machine data scan clean, hosted multi-OS gate, independent public-readiness review, readiness PR merge, explicit visibility approval, post-public ruleset/security verification. npm publish는 별도 explicit release gate입니다.
 
 ## 조사 메모
@@ -211,6 +211,7 @@
 - [x] Low package gate: `prepack`에 full check + package smoke를 포함하고 outer npm dry-run inheritance regression을 수정했습니다.
 - [x] Public-readiness metadata/docs/settings를 구현·검증하고 [PR #4](https://github.com/Kcrong/agy-acp/pull/4)를 concise English body로 생성했습니다.
 - [x] `06cf88b` focused re-review: Critical 0, High 0, Medium 0, Low 0 — PASS.
+- [x] PR #4 exact-head run `36745830565`: 4 jobs 모두 `runner_id=0`, steps 0인 pre-allocation failure로 code steps가 실행되지 않았습니다.
 - [ ] Hosted matrix, default-history replacement, visibility flip, npm publish의 외부/human gates를 순서대로 처리합니다.
 
 ## 반복 운영 규칙
