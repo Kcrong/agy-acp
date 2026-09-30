@@ -147,4 +147,22 @@ describe("signalAgyProcessTree", () => {
       [1234, true],
     ]);
   });
+
+  it("falls back to the direct child when Windows tree termination fails", () => {
+    const directSignals: NodeJS.Signals[] = [];
+    const child = {
+      pid: 1234,
+      kill(signal: NodeJS.Signals) {
+        directSignals.push(signal);
+        return true;
+      },
+    } as ChildProcessWithoutNullStreams;
+
+    signalAgyProcessTree(child, "SIGKILL", {
+      platform: "win32",
+      signalWindowsTree: (_pid, _force, onFailure) => onFailure(),
+    });
+
+    expect(directSignals).toEqual(["SIGKILL"]);
+  });
 });

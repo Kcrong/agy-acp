@@ -37,6 +37,7 @@ interface ActiveTurn {
 export interface AgyProcessControllerOptions {
   readonly invocation: AgyInvocationOptions;
   readonly limits: RuntimeLimits;
+  readonly signal?: AbortSignal;
 }
 
 export interface AgyProcessDiagnostics {
@@ -69,6 +70,7 @@ export class AgyProcessControllerError extends Error {
 export class AgyProcessController implements ManagedAgyProcess {
   readonly #child: ChildProcessWithoutNullStreams;
   readonly #limits: RuntimeLimits;
+  readonly #startupSignal: AbortSignal | undefined;
   readonly #parser: NdjsonParser<unknown>;
   readonly #eventListeners = new Set<AgyEventListener>();
   readonly #failureListeners = new Set<
@@ -97,9 +99,11 @@ export class AgyProcessController implements ManagedAgyProcess {
   private constructor(
     child: ChildProcessWithoutNullStreams,
     limits: RuntimeLimits,
+    signal?: AbortSignal,
   ) {
     this.#child = child;
     this.#limits = limits;
+    this.#startupSignal = signal;
     this.#parser = new NdjsonParser({ maxLineBytes: limits.maxLineBytes });
 
     let resolveReady: (() => void) | undefined;
@@ -127,6 +131,11 @@ export class AgyProcessController implements ManagedAgyProcess {
       this.#fail(new AgyProcessControllerError("INIT_TIMEOUT"));
     }, limits.initTimeoutMs);
     this.#initTimer.unref();
+
+    signal?.addEventListener("abort", this.#handleStartupAbort, { once: true });
+    if (signal?.aborted === true) {
+      queueMicrotask(this.#handleStartupAbort);
+    }
   }
 
   public static async start(
@@ -143,7 +152,11 @@ export class AgyProcessController implements ManagedAgyProcess {
       throw new AgyProcessControllerError("SPAWN_FAILED", error);
     }
 
-    const controller = new AgyProcessController(child, options.limits);
+    const controller = new AgyProcessController(
+      child,
+      options.limits,
+      options.signal,
+    );
     try {
       await controller.#ready;
       return controller;
@@ -259,6 +272,12 @@ export class AgyProcessController implements ManagedAgyProcess {
     this.#rejectActiveTurn(new AgyProcessControllerError("PROCESS_CLOSED"));
     return this.#beginShutdown(false);
   }
+
+  readonly #handleStartupAbort = (): void => {
+    if (!this.#readySettled) {
+      this.#fail(new AgyProcessControllerError("CANCELLED"));
+    }
+  };
 
   readonly #handleStdout = (chunk: string | Uint8Array): void => {
     if (this.#failed || this.#closed) {
@@ -393,6 +412,10 @@ export class AgyProcessController implements ManagedAgyProcess {
 
       this.#conversationId = event.conversationId;
       this.#readySettled = true;
+      this.#startupSignal?.removeEventListener(
+        "abort",
+        this.#handleStartupAbort,
+      );
       this.#clearInitTimer();
       this.#resolveReady();
       return;
@@ -418,12 +441,8 @@ export class AgyProcessController implements ManagedAgyProcess {
       return;
     }
 
-    if (event.kind === "result" && this.#activeTurn !== undefined) {
-      const active = this.#activeTurn;
-      this.#activeTurn = undefined;
-      clearTimeout(active.timer);
-      active.resolve(event);
-    }
+    const completingTurn =
+      event.kind === "result" ? this.#activeTurn : undefined;
 
     for (const listener of this.#eventListeners) {
       try {
@@ -431,6 +450,16 @@ export class AgyProcessController implements ManagedAgyProcess {
       } catch (error) {
         throw new AgyProcessControllerError("EVENT_HANDLER_FAILED", error);
       }
+    }
+
+    if (
+      event.kind === "result" &&
+      completingTurn !== undefined &&
+      this.#activeTurn === completingTurn
+    ) {
+      this.#activeTurn = undefined;
+      clearTimeout(completingTurn.timer);
+      completingTurn.resolve(event);
     }
   }
 
@@ -538,6 +567,10 @@ export class AgyProcessController implements ManagedAgyProcess {
   }
 
   #cleanupListeners(): void {
+    this.#startupSignal?.removeEventListener(
+      "abort",
+      this.#handleStartupAbort,
+    );
     this.#child.stdout.off("data", this.#handleStdout);
     this.#child.stdout.off("end", this.#handleStdoutEnd);
     this.#child.stdin.off("error", this.#handleStdinError);

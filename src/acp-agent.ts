@@ -18,10 +18,17 @@ import {
   type CreateSessionOptions,
   type LoadSessionOptions,
 } from "./session-manager.js";
+const MAX_STREAMED_TEXT_BYTES = 4 * 1024 * 1024;
 
 export interface AgySessionService {
-  createSession(options: CreateSessionOptions): Promise<string>;
-  loadSession(options: LoadSessionOptions): Promise<string>;
+  createSession(
+    options: CreateSessionOptions,
+    signal?: AbortSignal,
+  ): Promise<string>;
+  loadSession(
+    options: LoadSessionOptions,
+    signal?: AbortSignal,
+  ): Promise<string>;
   prompt(
     sessionId: string,
     input: unknown,
@@ -69,17 +76,40 @@ export function createAgyAgent(service: AgySessionService): AgentApp {
         version: "0.1.0",
       },
     }))
-    .onRequest(methods.agent.session.new, async ({ params }) => {
+    .onRequest(methods.agent.session.new, async ({ params, signal }) => {
       rejectMcpServers(params.mcpServers);
-      const sessionId = await mapRequestError(() =>
-        service.createSession(createOptions(params)),
-      );
-      return { sessionId };
+      try {
+        const sessionId = await service.createSession(
+          createOptions(params),
+          signal,
+        );
+        if (signal.aborted) {
+          await service.closeSession(sessionId).catch(() => undefined);
+          throw RequestError.requestCancelled();
+        }
+        return { sessionId };
+      } catch (error) {
+        if (signal.aborted) {
+          throw RequestError.requestCancelled();
+        }
+        throw toRequestError(error);
+      }
     })
-    .onRequest(methods.agent.session.load, async ({ params }) => {
+    .onRequest(methods.agent.session.load, async ({ params, signal }) => {
       rejectMcpServers(params.mcpServers);
-      await mapRequestError(() => service.loadSession(loadOptions(params)));
-      return {};
+      try {
+        const sessionId = await service.loadSession(loadOptions(params), signal);
+        if (signal.aborted) {
+          await service.closeSession(sessionId).catch(() => undefined);
+          throw RequestError.requestCancelled();
+        }
+        return {};
+      } catch (error) {
+        if (signal.aborted) {
+          throw RequestError.requestCancelled();
+        }
+        throw toRequestError(error);
+      }
     })
     .onRequest(methods.agent.session.close, async ({ params }) => {
       await mapRequestError(() => service.closeSession(params.sessionId));
@@ -100,7 +130,8 @@ export function createAgyAgent(service: AgySessionService): AgentApp {
       methods.agent.session.prompt,
       async ({ params, client, signal }) => {
       const input = promptToAgyInput(params.prompt);
-      let sentText = false;
+      let streamedText = "";
+      let streamedTextBytes = 0;
       const cancelForAbort = (): void => {
         void service.cancel(params.sessionId).catch(() => undefined);
       };
@@ -122,7 +153,14 @@ export function createAgyAgent(service: AgySessionService): AgentApp {
               return;
             }
 
-            sentText = true;
+            streamedTextBytes += Buffer.byteLength(event.textDelta);
+            if (streamedTextBytes > MAX_STREAMED_TEXT_BYTES) {
+              throw RequestError.internalError(
+                undefined,
+                "agy streamed response exceeded limit",
+              );
+            }
+            streamedText += event.textDelta;
             await client.notify(methods.client.session.update, {
               sessionId: params.sessionId,
               update: {
@@ -133,21 +171,23 @@ export function createAgyAgent(service: AgySessionService): AgentApp {
           },
         );
 
-        if (
-          result.status === "SUCCESS" &&
-          !sentText &&
-          result.response.length > 0
-        ) {
-          await client.notify(methods.client.session.update, {
-            sessionId: params.sessionId,
-            update: {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: result.response },
-            },
-          });
-        }
-
         if (result.status === "SUCCESS") {
+          if (!result.response.startsWith(streamedText)) {
+            throw RequestError.internalError(
+              undefined,
+              "agy streamed response mismatch",
+            );
+          }
+          const suffix = result.response.slice(streamedText.length);
+          if (suffix.length > 0) {
+            await client.notify(methods.client.session.update, {
+              sessionId: params.sessionId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: suffix },
+              },
+            });
+          }
           return { stopReason: "end_turn" };
         }
         throw RequestError.internalError(undefined, "agy execution failed");
@@ -261,10 +301,12 @@ function toRequestError(error: unknown): RequestError {
   if (error instanceof SessionManagerError) {
     switch (error.code) {
       case "UNKNOWN_SESSION":
-      case "SESSION_EXISTS":
       case "INVALID_SESSION":
-      case "SESSION_BUSY":
         return RequestError.invalidParams(undefined, error.message);
+      case "SESSION_BUSY":
+        return new RequestError(-32010, error.message);
+      case "SESSION_EXISTS":
+        return new RequestError(-32011, error.message);
       case "SESSION_LIMIT":
         return new RequestError(-32000, error.message);
       case "SESSION_ID_MISMATCH":

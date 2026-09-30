@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: 독립 리뷰 지적 수정
+- 현재 단계: exact-head 독립 재리뷰
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: new/load AbortSignal, active close cancellation, lazy-start cancel arbitration, result listener-before-resolve, Windows taskkill failure fallback을 RED tests로 수정합니다.
+- 다음 작업: 현재 변경을 commit/push한 exact head에서 runtime/protocol과 public-release 독립 재리뷰를 수행하고 Critical/High 0을 확인합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -126,7 +126,14 @@
 - [x] High: close 중 session ID와 admission slot을 process retirement 완료까지 유지합니다.
 - [x] High: pre-init failure는 child shutdown/close barrier 후에만 `start()`를 reject해 failed startup retry가 process cap을 우회하지 못합니다.
 - [x] High barrier targeted 34/34, 전체 unit 80/80, mock E2E 8/8, lint, typecheck, build 통과.
-- [ ] Medium: new/load request cancel, active close cancel semantics, lazy-start cancel arbitration, result-listener barrier, Windows taskkill failure fallback.
+- [x] Medium: new/load SDK request AbortSignal을 child startup까지 전파하고 late controller/session cleanup 후 `-32800`으로 응답합니다.
+- [x] Medium: active close는 prompt를 cancel semantics로 종료하며 cancel failure에도 session reservation을 finally에서 제거합니다.
+- [x] Medium: lazy restart startup cancellation이 timeout/startup failure보다 우선하고 result listener 성공 후에만 terminal result를 resolve합니다.
+- [x] Medium: Windows `taskkill.exe` asynchronous failure를 direct-child signal로 안전하게 fallback합니다.
+- [x] Low: `SESSION_BUSY`/`SESSION_EXISTS`를 distinct `-320xx` server-state errors로 분류하고 partial streamed response는 검증된 final suffix만 전송하며 불일치는 fail-closed합니다.
+- [x] 설계 문서의 unknown-event logging, prompt-timeout configuration, Windows tree termination, final suffix 설명을 실제 구현과 일치시켰습니다.
+- [x] Remediation targeted 60/60, 전체 unit 89/89, mock E2E 8/8, lint, typecheck, build, packed clean-install/import/bin smoke, 실제 authenticated agy smoke 1/1 통과.
+- [ ] 현재 exact head runtime/protocol 및 public-release 독립 재리뷰.
 
 
 ## 진행 중

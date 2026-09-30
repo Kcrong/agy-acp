@@ -584,3 +584,23 @@ describe("AgyProcessController high-severity barriers", () => {
     expect(error).toMatchObject({ code: "INVALID_OUTPUT" });
   });
 });
+
+describe("AgyProcessController result barrier", () => {
+  it("rejects the turn when a terminal result listener fails", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+    controller.onEvent((event) => {
+      if (event.kind === "result") {
+        throw new Error("result listener failed");
+      }
+    });
+
+    const turn = controller.runTurn({ event: "user" });
+    fake.stdout.write(resultLine());
+
+    await expect(turn).rejects.toMatchObject({
+      code: "EVENT_HANDLER_FAILED",
+    });
+    expect(fake.signals).toEqual(["SIGTERM"]);
+  });
+});

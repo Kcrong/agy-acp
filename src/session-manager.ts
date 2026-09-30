@@ -35,9 +35,11 @@ export interface LoadSessionOptions extends CreateSessionOptions {
 
 export type AgyControllerFactory = (
   invocation: AgyInvocationOptions,
+  signal?: AbortSignal,
 ) => Promise<ManagedAgyProcess>;
 
 interface PendingPrompt {
+  readonly abort: AbortController;
   cancelled: boolean;
   active: boolean;
   controller: ManagedAgyProcess | undefined;
@@ -81,10 +83,11 @@ export class SessionManager {
     this.#options = options;
     this.#factory =
       factory ??
-      ((invocation) =>
+      ((invocation, signal) =>
         AgyProcessController.start({
           invocation,
           limits: options.limits,
+          ...(signal === undefined ? {} : { signal }),
         }));
   }
 
@@ -92,11 +95,24 @@ export class SessionManager {
     return this.#sessions.size;
   }
 
-  public async createSession(options: CreateSessionOptions): Promise<string> {
+  public async createSession(
+    options: CreateSessionOptions,
+    signal?: AbortSignal,
+  ): Promise<string> {
     this.#assertOpen();
+    if (signal?.aborted === true) {
+      throw new AgyProcessControllerError("CANCELLED");
+    }
     this.#reserveSessionSlot();
     return this.#trackStart(async () => {
-      const controller = await this.#factory(this.#buildInvocation(options));
+      const controller = await this.#factory(
+        this.#buildInvocation(options),
+        signal,
+      );
+      if (signal?.aborted === true) {
+        await controller.close();
+        throw new AgyProcessControllerError("CANCELLED");
+      }
       if (this.#closed) {
         await controller.close();
         throw new SessionManagerError("MANAGER_CLOSED");
@@ -120,8 +136,14 @@ export class SessionManager {
     });
   }
 
-  public async loadSession(options: LoadSessionOptions): Promise<string> {
+  public async loadSession(
+    options: LoadSessionOptions,
+    signal?: AbortSignal,
+  ): Promise<string> {
     this.#assertOpen();
+    if (signal?.aborted === true) {
+      throw new AgyProcessControllerError("CANCELLED");
+    }
     requireSessionId(options.sessionId);
     if (
       this.#sessions.has(options.sessionId) ||
@@ -136,7 +158,12 @@ export class SessionManager {
       try {
         const controller = await this.#factory(
           this.#buildInvocation(options, options.sessionId),
+          signal,
         );
+        if (signal?.aborted === true) {
+          await controller.close();
+          throw new AgyProcessControllerError("CANCELLED");
+        }
         if (this.#closed) {
           await controller.close();
           throw new SessionManagerError("MANAGER_CLOSED");
@@ -173,6 +200,7 @@ export class SessionManager {
     }
 
     const pending: PendingPrompt = {
+      abort: new AbortController(),
       cancelled: false,
       active: false,
       controller: undefined,
@@ -191,7 +219,7 @@ export class SessionManager {
     let unsubscribe: (() => void) | undefined;
 
     try {
-      controller = await this.#ensureController(record);
+      controller = await this.#ensureController(record, pending.abort.signal);
       if (pending.cancelled || record.closed || this.#closed) {
         throw new AgyProcessControllerError("CANCELLED");
       }
@@ -225,6 +253,7 @@ export class SessionManager {
     }
 
     pending.cancelled = true;
+    pending.abort.abort();
     const controller = pending.controller;
     if (!pending.active || controller === undefined) {
       return Promise.resolve();
@@ -236,10 +265,19 @@ export class SessionManager {
   public async closeSession(sessionId: string): Promise<void> {
     const record = this.#requireRecord(sessionId);
     record.closed = true;
-    if (record.prompt !== undefined) {
-      record.prompt.cancelled = true;
-    }
     try {
+      const pending = record.prompt;
+      if (pending !== undefined) {
+        pending.cancelled = true;
+        pending.abort.abort();
+        if (pending.active && pending.controller !== undefined) {
+          await this.#retireController(
+            record,
+            pending.controller,
+            pending.controller.cancel(),
+          );
+        }
+      }
       await this.#closeRecord(record);
     } finally {
       if (this.#sessions.get(sessionId) === record) {
@@ -260,6 +298,7 @@ export class SessionManager {
       record.closed = true;
       if (record.prompt !== undefined) {
         record.prompt.cancelled = true;
+        record.prompt.abort.abort();
       }
     }
 
@@ -299,7 +338,10 @@ export class SessionManager {
     return record;
   }
 
-  async #ensureController(record: SessionRecord): Promise<ManagedAgyProcess> {
+  async #ensureController(
+    record: SessionRecord,
+    signal?: AbortSignal,
+  ): Promise<ManagedAgyProcess> {
     if (record.retiring !== undefined) {
       await record.retiring;
     }
@@ -323,7 +365,12 @@ export class SessionManager {
     const starting = this.#trackStart(async () => {
       const controller = await this.#factory(
         this.#buildInvocation(record, record.sessionId),
+        signal,
       );
+      if (signal?.aborted === true) {
+        await controller.close();
+        throw new AgyProcessControllerError("CANCELLED");
+      }
       if (record.closed || this.#closed) {
         await controller.close();
         throw new SessionManagerError("MANAGER_CLOSED");

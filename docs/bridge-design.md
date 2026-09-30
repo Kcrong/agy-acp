@@ -44,9 +44,9 @@ Prompt block은 원래 순서를 유지하며 빈 text는 제거하고 block 사
 | cancel 이후 `result.status=ERROR` + context cancellation | `PromptResponse { stopReason: "cancelled" }` |
 | 기타 `result.status=ERROR` | typed execution error를 JSON-RPC error로 변환합니다. |
 | malformed NDJSON·조기 EOF·non-zero exit | typed transport/process error를 JSON-RPC error로 변환합니다. |
-| unknown event | bounded stderr 진단 후 무시합니다. |
+| unknown event | Forward compatibility를 위해 raw payload logging 없이 조용히 무시합니다. |
 
-Result의 response가 이미 `text_delta`로 모두 전송된 경우 중복 전송하지 않습니다. delta가 전혀 없지만 result response가 있으면 final text를 한 번 전송합니다. Usage는 안정 계약에서 제외하고 raw token 수치를 protocol이나 기본 로그에 노출하지 않습니다.
+Result response가 전송된 `text_delta`의 동일한 prefix이면 아직 전송하지 않은 suffix만 추가 전송합니다. delta가 전혀 없으면 final text 전체를 한 번 전송하며, final response가 streamed prefix와 호환되지 않으면 중복·변조된 출력을 내보내지 않고 fail-closed합니다. Usage는 안정 계약에서 제외하고 raw token 수치를 protocol이나 기본 로그에 노출하지 않습니다.
 
 ## Session identity와 process lifecycle
 
@@ -61,14 +61,14 @@ Result의 response가 이미 `text_delta`로 모두 전송된 경우 중복 전�
 ## 취소와 timeout
 
 - init timeout 기본값: 15초
-- prompt timeout 기본값: 30분, public CLI option으로 조정 가능
+- prompt timeout 기본값: 30분, `AGY_ACP_PROMPT_TIMEOUT_MS`로 조정 가능
 - graceful cancel period 기본값: 5초
 - hard-kill 대기 기본값: 2초
 
 취소 순서:
 
 1. session의 active prompt를 cancelled 상태로 원자적으로 전환합니다.
-2. POSIX에서는 SIGTERM, Windows에서는 Node child termination abstraction을 사용합니다.
+2. POSIX에서는 process group에 SIGTERM, Windows에서는 absolute `taskkill.exe /T`를 사용합니다.
 3. grace period 안에 structured result 또는 exit를 기다립니다.
 4. 남아 있으면 platform-specific hard kill을 수행합니다.
 5. prompt를 `cancelled`로 종료하고 다음 prompt에서 conversation을 lazy restart할 수 있게 합니다.

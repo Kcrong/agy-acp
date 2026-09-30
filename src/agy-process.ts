@@ -107,7 +107,11 @@ export function spawnAgyProcess(
 export interface AgyProcessTreeSignalOptions {
   readonly platform?: NodeJS.Platform;
   readonly signalGroup?: (pid: number, signal: NodeJS.Signals) => void;
-  readonly signalWindowsTree?: (pid: number, force: boolean) => void;
+  readonly signalWindowsTree?: (
+    pid: number,
+    force: boolean,
+    onFailure: () => void,
+  ) => void;
 }
 
 export function signalAgyProcessTree(
@@ -121,25 +125,42 @@ export function signalAgyProcessTree(
     return;
   }
 
+  const signalDirect = (): void => {
+    try {
+      child.kill(signal);
+    } catch {
+      // The process may have exited between tree and direct-child signaling.
+    }
+  };
+
   try {
     if ((options.platform ?? process.platform) === "win32") {
-      (options.signalWindowsTree ?? defaultSignalWindowsTree)(
-        pid,
-        signal === "SIGKILL",
-      );
+      if (options.signalWindowsTree === undefined) {
+        defaultSignalWindowsTree(pid, signal, signalDirect);
+      } else {
+        options.signalWindowsTree(
+          pid,
+          signal === "SIGKILL",
+          signalDirect,
+        );
+      }
     } else {
       (options.signalGroup ?? process.kill)(-pid, signal);
     }
   } catch {
-    child.kill(signal);
+    signalDirect();
   }
 }
 
-function defaultSignalWindowsTree(pid: number, force: boolean): void {
+function defaultSignalWindowsTree(
+  pid: number,
+  signal: NodeJS.Signals,
+  onFailure: () => void,
+): void {
   const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
   const command = win32.join(systemRoot, "System32", "taskkill.exe");
   const args = ["/PID", String(pid), "/T"];
-  if (force) {
+  if (signal === "SIGKILL") {
     args.push("/F");
   }
 
@@ -147,7 +168,11 @@ function defaultSignalWindowsTree(pid: number, force: boolean): void {
     command,
     args,
     { windowsHide: true },
-    () => undefined,
+    (error) => {
+      if (error !== null) {
+        onFailure();
+      }
+    },
   );
   killer.unref();
 }

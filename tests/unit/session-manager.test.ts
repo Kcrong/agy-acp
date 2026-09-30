@@ -446,3 +446,100 @@ describe("SessionManager closing reservations", () => {
     await manager.closeAll();
   });
 });
+
+class ActiveCloseController extends FakeController {
+  public readonly activeTurn = deferred<AgyResultEvent>();
+
+  public override runTurn(value: unknown): Promise<AgyResultEvent> {
+    this.turns.push(value);
+    return this.activeTurn.promise;
+  }
+
+  public override cancel(): Promise<void> {
+    this.cancelCount += 1;
+    this.isClosed = true;
+    this.activeTurn.reject(new AgyProcessControllerError("CANCELLED"));
+    return Promise.resolve();
+  }
+
+  public override close(): Promise<void> {
+    this.closeCount += 1;
+    this.isClosed = true;
+    this.activeTurn.reject(new AgyProcessControllerError("PROCESS_CLOSED"));
+    return Promise.resolve();
+  }
+}
+
+describe("SessionManager cancellation arbitration", () => {
+  it("aborts a lazy restart and returns cancellation before startup timeout", async () => {
+    const initial = new FakeController("session-1");
+    let calls = 0;
+    let startupSignal: AbortSignal | undefined;
+    const manager = new SessionManager({ limits: LIMITS }, (_invocation, signal) => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(initial);
+      }
+      startupSignal = signal;
+      return new Promise<ManagedAgyProcess>((_resolve, reject) => {
+        const cancel = (): void =>
+          reject(new AgyProcessControllerError("CANCELLED"));
+        if (signal?.aborted === true) {
+          cancel();
+        } else {
+          signal?.addEventListener("abort", cancel, { once: true });
+        }
+      });
+    });
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    initial.emitFailure(new AgyProcessControllerError("PROCESS_EXITED"));
+    await Promise.resolve();
+
+    const prompting = manager.prompt(sessionId, { event: "restart" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(startupSignal).toBeDefined();
+
+    await manager.cancel(sessionId);
+    await expect(prompting).rejects.toMatchObject({ code: "CANCELLED" });
+    await manager.closeAll();
+  });
+
+  it("cancels active work before closing the session", async () => {
+    const controller = new ActiveCloseController("session-1");
+    const manager = new SessionManager(
+      { limits: LIMITS },
+      () => Promise.resolve(controller),
+    );
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    const prompting = manager.prompt(sessionId, { event: "active" });
+    await Promise.resolve();
+
+    await manager.closeSession(sessionId);
+
+    await expect(prompting).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(controller.cancelCount).toBe(1);
+    expect(manager.size).toBe(0);
+  });
+
+  it("releases the session reservation when active cancellation rejects", async () => {
+    const controller = new ActiveCloseController("session-1");
+    controller.cancel = () => {
+      controller.cancelCount += 1;
+      controller.isClosed = true;
+      controller.activeTurn.reject(new AgyProcessControllerError("CANCELLED"));
+      return Promise.reject(new Error("cancel failed"));
+    };
+    const manager = new SessionManager(
+      { limits: LIMITS },
+      () => Promise.resolve(controller),
+    );
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    const prompting = manager.prompt(sessionId, { event: "active" });
+    await Promise.resolve();
+
+    await expect(manager.closeSession(sessionId)).rejects.toThrow("cancel failed");
+    await expect(prompting).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(manager.size).toBe(0);
+  });
+});

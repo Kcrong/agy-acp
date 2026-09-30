@@ -30,7 +30,7 @@ function successResult(sessionId = "session-1"): AgyResultEvent {
     durationSeconds: 1,
     error: null,
     numTurns: 1,
-    response: "done",
+    response: "delta",
     status: "SUCCESS",
     usage: {},
   };
@@ -38,7 +38,9 @@ function successResult(sessionId = "session-1"): AgyResultEvent {
 
 class FakeSessionService implements AgySessionService {
   public readonly creates: CreateSessionOptions[] = [];
+  public readonly createSignals: Array<AbortSignal | undefined> = [];
   public readonly loads: LoadSessionOptions[] = [];
+  public readonly loadSignals: Array<AbortSignal | undefined> = [];
   public readonly prompts: Array<{ sessionId: string; input: unknown }> = [];
   public readonly cancellations: string[] = [];
   public readonly closes: string[] = [];
@@ -50,15 +52,23 @@ class FakeSessionService implements AgySessionService {
   public rejectHeldPrompt: ((error: Error) => void) | undefined;
   public promptResult = successResult();
 
-  public createSession(options: CreateSessionOptions): Promise<string> {
+  public createSession(
+    options: CreateSessionOptions,
+    signal?: AbortSignal,
+  ): Promise<string> {
     this.creates.push(options);
+    this.createSignals.push(signal);
     return this.createError === undefined
       ? Promise.resolve("session-1")
       : Promise.reject(this.createError);
   }
 
-  public loadSession(options: LoadSessionOptions): Promise<string> {
+  public loadSession(
+    options: LoadSessionOptions,
+    signal?: AbortSignal,
+  ): Promise<string> {
     this.loads.push(options);
+    this.loadSignals.push(signal);
     return this.loadError === undefined
       ? Promise.resolve(options.sessionId)
       : Promise.reject(this.loadError);
@@ -328,5 +338,143 @@ describe("createAgyAgent request boundaries", () => {
         }),
       ).rejects.toMatchObject({ code: -32603 });
     });
+  });
+
+  it("maps transient session state conflicts to retryable server errors", async () => {
+    const service = new FakeSessionService();
+    const app = createAgyAgent(service);
+
+    await client({ name: "test-client" }).connectWith(app, async (context) => {
+      service.createError = new SessionManagerError("SESSION_BUSY");
+      await expect(
+        context.request(methods.agent.session.new, {
+          cwd: "/workspace",
+          mcpServers: [],
+        }),
+      ).rejects.toMatchObject({ code: -32010 });
+
+      service.createError = new SessionManagerError("SESSION_EXISTS");
+      await expect(
+        context.request(methods.agent.session.new, {
+          cwd: "/workspace",
+          mcpServers: [],
+        }),
+      ).rejects.toMatchObject({ code: -32011 });
+    });
+  });
+});
+
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+class DelayedSessionService extends FakeSessionService {
+  public readonly createStart = deferred<string>();
+  public readonly loadStart = deferred<string>();
+
+  public override createSession(
+    options: CreateSessionOptions,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    this.creates.push(options);
+    this.createSignals.push(signal);
+    return this.createStart.promise;
+  }
+
+  public override loadSession(
+    options: LoadSessionOptions,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    this.loads.push(options);
+    this.loadSignals.push(signal);
+    return this.loadStart.promise;
+  }
+}
+
+describe("createAgyAgent startup cancellation", () => {
+  it("closes a late new session after request cancellation", async () => {
+    const service = new DelayedSessionService();
+    const app = createAgyAgent(service);
+
+    await client({ name: "test-client" }).connectWith(app, async (context) => {
+      const abort = new AbortController();
+      const creating = context.request(
+        methods.agent.session.new,
+        { cwd: "/workspace", mcpServers: [] },
+        { cancellationSignal: abort.signal },
+      );
+      await immediate();
+      const handlerSignal = service.createSignals[0];
+      expect(handlerSignal?.aborted).toBe(false);
+      abort.abort();
+      await immediate();
+      expect(handlerSignal?.aborted).toBe(true);
+      service.createStart.resolve("late-new");
+
+      await expect(creating).rejects.toMatchObject({ code: -32800 });
+      expect(service.closes).toEqual(["late-new"]);
+    });
+  });
+
+  it("closes a late loaded session after request cancellation", async () => {
+    const service = new DelayedSessionService();
+    const app = createAgyAgent(service);
+
+    await client({ name: "test-client" }).connectWith(app, async (context) => {
+      const abort = new AbortController();
+      const loading = context.request(
+        methods.agent.session.load,
+        { cwd: "/workspace", sessionId: "late-load", mcpServers: [] },
+        { cancellationSignal: abort.signal },
+      );
+      await immediate();
+      const handlerSignal = service.loadSignals[0];
+      expect(handlerSignal?.aborted).toBe(false);
+      abort.abort();
+      await immediate();
+      expect(handlerSignal?.aborted).toBe(true);
+      service.loadStart.resolve("late-load");
+
+      await expect(loading).rejects.toMatchObject({ code: -32800 });
+      expect(service.closes).toEqual(["late-load"]);
+    });
+  });
+});
+
+describe("createAgyAgent streamed response reconciliation", () => {
+  it("emits only the verified suffix from the authoritative final response", async () => {
+    const service = new FakeSessionService();
+    service.promptResult = { ...successResult(), response: "delta-tail" };
+    const updates: string[] = [];
+    const app = createAgyAgent(service);
+    const testClient = client({ name: "test-client" }).onNotification(
+      methods.client.session.update,
+      ({ params }) => {
+        if (
+          params.update.sessionUpdate === "agent_message_chunk" &&
+          params.update.content.type === "text"
+        ) {
+          updates.push(params.update.content.text);
+        }
+      },
+    );
+
+    await testClient.connectWith(app, async (context) => {
+      await context.request(methods.agent.session.prompt, {
+        sessionId: "session-1",
+        prompt: [{ type: "text", text: "suffix" }],
+      });
+    });
+
+    expect(updates).toEqual(["delta", "-tail"]);
   });
 });
