@@ -1,0 +1,32 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: Do not include credentials, private prompts, conversation IDs, or real user data.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the observable problem.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it?
+      description: Provide minimal, sanitized steps.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Node.js, npm, agy, and client versions when relevant.

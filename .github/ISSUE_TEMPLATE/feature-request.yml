@@ -1,0 +1,23 @@
+name: Feature request
+description: Propose an improvement to agy-acp
+title: "[Feature] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem should this solve?
+      description: Describe the user need, not implementation details.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: What outcome do you want?
+      description: Describe the smallest useful result.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional.

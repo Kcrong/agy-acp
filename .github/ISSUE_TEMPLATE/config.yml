@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Kcrong/agy-acp/security/policy
+    about: Follow the private reporting guidance. Never post secrets publicly.
