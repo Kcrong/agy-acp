@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: child stdout→ACP notification 경로에 bounded async queue와 pause/resume backpressure를 추가하고 slow client·notification failure RED tests를 구현합니다.
+- 다음 작업: stdout EOF/child close ordering, write failure controller retirement, idle/stale event phase를 RED tests로 재현해 ProcessController terminal state machine을 수정합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -95,7 +95,9 @@
 - [x] concurrent load: session ID를 factory await 전에 reserve해 duplicate controller 생성을 차단합니다.
 - [x] Unexpected child exit 뒤 `close()`가 새 7초 timer를 만들던 E2E regression을 즉시-resolved cleanup으로 수정했습니다.
 - [x] SessionManager 11/11 + ProcessController 13/13, targeted 합계 24/24, failure E2E 6/6, typecheck, lint 통과.
-- [ ] Downstream notification backpressure High 수정.
+- [x] Downstream notification backpressure: awaitable event listener와 serialized batch queue를 추가하고 slow consumer 동안 child stdout을 pause/resume합니다. Listener rejection은 즉시 typed failure로 shutdown합니다.
+- [x] Backpressure targeted tests 2/2 포함 전체 unit 57/57, mock E2E 7/7, lint, typecheck, build 통과.
+- [ ] Medium remediation: stdout EOF/child close ordering, write failure retire, event phase invariants, request AbortSignal, path/error mapping, session admission limit.
 
 ## 진행 중
 

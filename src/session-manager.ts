@@ -1,9 +1,10 @@
-import type { AgyEvent, AgyResultEvent } from "./agy-events.js";
+import type { AgyResultEvent } from "./agy-events.js";
 import type { AgyInvocationOptions } from "./agy-process.js";
 import type { RuntimeLimits } from "./config.js";
 import {
   AgyProcessController,
   AgyProcessControllerError,
+  type AgyEventListener,
   type ManagedAgyProcess,
 } from "./process-controller.js";
 
@@ -155,7 +156,7 @@ export class SessionManager {
   public prompt(
     sessionId: string,
     input: unknown,
-    onEvent?: (event: AgyEvent) => void,
+    onEvent?: AgyEventListener,
   ): Promise<AgyResultEvent> {
     const record = this.#requireRecord(sessionId);
     if (record.prompt !== undefined) {
@@ -175,7 +176,7 @@ export class SessionManager {
     record: SessionRecord,
     pending: PendingPrompt,
     input: unknown,
-    onEvent?: (event: AgyEvent) => void,
+    onEvent?: AgyEventListener,
   ): Promise<AgyResultEvent> {
     let controller: ManagedAgyProcess | undefined;
     let unsubscribe: (() => void) | undefined;

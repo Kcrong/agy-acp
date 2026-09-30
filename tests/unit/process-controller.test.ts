@@ -1,6 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
+import { setImmediate as immediate } from "node:timers/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -127,7 +128,9 @@ describe("AgyProcessController", () => {
     const fake = createFakeProcess();
     const events: string[] = [];
     const controller = await startReady(fake);
-    controller.onEvent((event) => events.push(event.kind));
+    controller.onEvent((event) => {
+      events.push(event.kind);
+    });
 
     fake.stdout.write(
       `${JSON.stringify({
@@ -141,6 +144,7 @@ describe("AgyProcessController", () => {
         },
       })}\n${JSON.stringify({ event: "future_event" })}\n`,
     );
+    await immediate();
 
     expect(events).toEqual(["step_update", "unknown"]);
   });
@@ -153,6 +157,7 @@ describe("AgyProcessController", () => {
 
     fake.stdout.write("{broken}\n");
     fake.stdout.write("{broken-again}\n");
+    await immediate();
 
     expect(failures).toHaveLength(1);
     expect(failures[0]).toMatchObject({ code: "INVALID_OUTPUT" });
@@ -353,5 +358,70 @@ describe("AgyProcessController closed cleanup", () => {
     await expect(controller.close()).resolves.toBeUndefined();
     expect(fake.signals).toEqual([]);
     expect(fake.child.listenerCount("exit")).toBe(0);
+  });
+});
+
+function stepLine(stepIndex: number, text: string): string {
+  return `${JSON.stringify({
+    event: "step_update",
+    step_update: {
+      conversation_id: "opaque-id",
+      step_index: stepIndex,
+      state: "running",
+      step_type: "assistant_text",
+      text_delta: text,
+    },
+  })}\n`;
+}
+
+describe("AgyProcessController output backpressure", () => {
+  it("pauses child stdout while an async event listener is pending", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+    const seen: number[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    controller.onEvent(async (event) => {
+      if (event.kind !== "step_update") {
+        return;
+      }
+      seen.push(event.stepIndex);
+      if (event.stepIndex === 0) {
+        await gate;
+      }
+    });
+
+    fake.stdout.write(stepLine(0, "first"));
+    await immediate();
+    expect(fake.stdout.isPaused()).toBe(true);
+
+    fake.stdout.write(stepLine(1, "second"));
+    await immediate();
+    expect(seen).toEqual([0]);
+
+    release();
+    await immediate();
+    await immediate();
+    expect(seen).toEqual([0, 1]);
+    expect(fake.stdout.isPaused()).toBe(false);
+  });
+
+  it("handles listener rejection immediately and terminates once", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+    const failures: AgyProcessControllerError[] = [];
+    controller.onFailure((error) => failures.push(error));
+    controller.onEvent(() => Promise.reject(new Error("downstream failed")));
+
+    fake.stdout.write(stepLine(0, "text"));
+    await immediate();
+    await immediate();
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({ code: "EVENT_HANDLER_FAILED" });
+    expect(fake.signals).toEqual(["SIGTERM"]);
   });
 });

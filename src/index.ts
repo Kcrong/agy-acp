@@ -31,6 +31,7 @@ export {
   AgyProcessControllerError,
 } from "./process-controller.js";
 export type {
+  AgyEventListener,
   AgyProcessControllerErrorCode,
   AgyProcessControllerOptions,
   AgyProcessDiagnostics,

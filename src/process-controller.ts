@@ -42,13 +42,15 @@ export interface AgyProcessDiagnostics {
   readonly stderrTruncated: boolean;
 }
 
+export type AgyEventListener = (event: AgyEvent) => void | Promise<void>;
+
 export interface ManagedAgyProcess {
   readonly conversationId: string;
   readonly isClosed: boolean;
   runTurn(value: unknown): Promise<AgyResultEvent>;
   cancel(): Promise<void>;
   close(): Promise<void>;
-  onEvent(listener: (event: AgyEvent) => void): () => void;
+  onEvent(listener: AgyEventListener): () => void;
   onFailure(listener: (error: AgyProcessControllerError) => void): () => void;
 }
 
@@ -66,13 +68,15 @@ export class AgyProcessController implements ManagedAgyProcess {
   readonly #child: ChildProcessWithoutNullStreams;
   readonly #limits: RuntimeLimits;
   readonly #parser: NdjsonParser<unknown>;
-  readonly #eventListeners = new Set<(event: AgyEvent) => void>();
+  readonly #eventListeners = new Set<AgyEventListener>();
   readonly #failureListeners = new Set<
     (error: AgyProcessControllerError) => void
   >();
   readonly #ready: Promise<void>;
   readonly #resolveReady: () => void;
   readonly #rejectReady: (error: AgyProcessControllerError) => void;
+  #eventQueue: Promise<void> = Promise.resolve();
+  #stdoutEnded = false;
   #initTimer: NodeJS.Timeout | undefined;
   #activeTurn: ActiveTurn | undefined;
   #shutdownPromise: Promise<void> | undefined;
@@ -153,7 +157,7 @@ export class AgyProcessController implements ManagedAgyProcess {
     };
   }
 
-  public onEvent(listener: (event: AgyEvent) => void): () => void {
+  public onEvent(listener: AgyEventListener): () => void {
     this.#eventListeners.add(listener);
     return () => this.#eventListeners.delete(listener);
   }
@@ -250,9 +254,8 @@ export class AgyProcessController implements ManagedAgyProcess {
     }
 
     try {
-      for (const value of this.#parser.push(chunk)) {
-        this.#acceptEvent(parseAgyEvent(value));
-      }
+      const events = this.#parser.push(chunk).map(parseAgyEvent);
+      this.#queueEvents(events);
     } catch (error) {
       this.#fail(new AgyProcessControllerError("INVALID_OUTPUT", error));
     }
@@ -263,10 +266,10 @@ export class AgyProcessController implements ManagedAgyProcess {
       return;
     }
 
+    this.#stdoutEnded = true;
     try {
-      for (const value of this.#parser.finish()) {
-        this.#acceptEvent(parseAgyEvent(value));
-      }
+      const events = this.#parser.finish().map(parseAgyEvent);
+      this.#queueEvents(events);
     } catch (error) {
       this.#fail(new AgyProcessControllerError("INVALID_OUTPUT", error));
     }
@@ -309,7 +312,38 @@ export class AgyProcessController implements ManagedAgyProcess {
     this.#cleanupListeners();
   };
 
-  #acceptEvent(event: AgyEvent): void {
+  #queueEvents(events: readonly AgyEvent[]): void {
+    if (events.length === 0) {
+      return;
+    }
+
+    this.#child.stdout.pause();
+    const queued = this.#eventQueue.then(async () => {
+      for (const event of events) {
+        await this.#acceptEvent(event);
+      }
+    });
+    const handled = queued.catch((error: unknown) => {
+      const wrapped =
+        error instanceof AgyProcessControllerError
+          ? error
+          : new AgyProcessControllerError("EVENT_HANDLER_FAILED", error);
+      this.#fail(wrapped);
+    });
+    this.#eventQueue = handled;
+    void handled.then(() => {
+      if (
+        this.#eventQueue === handled &&
+        !this.#failed &&
+        !this.#closed &&
+        !this.#stdoutEnded
+      ) {
+        this.#child.stdout.resume();
+      }
+    });
+  }
+
+  async #acceptEvent(event: AgyEvent): Promise<void> {
     if (!this.#readySettled) {
       if (event.kind !== "init") {
         if (event.kind === "unknown") {
@@ -343,12 +377,9 @@ export class AgyProcessController implements ManagedAgyProcess {
 
     for (const listener of this.#eventListeners) {
       try {
-        listener(event);
+        await listener(event);
       } catch (error) {
-        this.#fail(
-          new AgyProcessControllerError("EVENT_HANDLER_FAILED", error),
-        );
-        return;
+        throw new AgyProcessControllerError("EVENT_HANDLER_FAILED", error);
       }
     }
   }

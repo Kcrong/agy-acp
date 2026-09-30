@@ -7,8 +7,11 @@ import {
   type ContentBlock,
 } from "@agentclientprotocol/sdk";
 
-import type { AgyEvent, AgyResultEvent } from "./agy-events.js";
-import { AgyProcessControllerError } from "./process-controller.js";
+import type { AgyResultEvent } from "./agy-events.js";
+import {
+  AgyProcessControllerError,
+  type AgyEventListener,
+} from "./process-controller.js";
 import {
   SessionManagerError,
   type CreateSessionOptions,
@@ -21,7 +24,7 @@ export interface AgySessionService {
   prompt(
     sessionId: string,
     input: unknown,
-    onEvent?: (event: AgyEvent) => void,
+    onEvent?: AgyEventListener,
   ): Promise<AgyResultEvent>;
   cancel(sessionId: string): Promise<void>;
   closeSession(sessionId: string): Promise<void>;
@@ -94,14 +97,13 @@ export function createAgyAgent(service: AgySessionService): AgentApp {
     })
     .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
       const input = promptToAgyInput(params.prompt);
-      let updates = Promise.resolve();
       let sentText = false;
 
       try {
         const result = await service.prompt(
           params.sessionId,
           input,
-          (event) => {
+          async (event) => {
             if (
               event.kind !== "step_update" ||
               event.textDelta === undefined ||
@@ -111,15 +113,13 @@ export function createAgyAgent(service: AgySessionService): AgentApp {
             }
 
             sentText = true;
-            updates = updates.then(() =>
-              client.notify(methods.client.session.update, {
-                sessionId: params.sessionId,
-                update: {
-                  sessionUpdate: "agent_message_chunk",
-                  content: { type: "text", text: event.textDelta as string },
-                },
-              }),
-            );
+            await client.notify(methods.client.session.update, {
+              sessionId: params.sessionId,
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: event.textDelta },
+              },
+            });
           },
         );
 
@@ -128,17 +128,14 @@ export function createAgyAgent(service: AgySessionService): AgentApp {
           !sentText &&
           result.response.length > 0
         ) {
-          updates = updates.then(() =>
-            client.notify(methods.client.session.update, {
-              sessionId: params.sessionId,
-              update: {
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: result.response },
-              },
-            }),
-          );
+          await client.notify(methods.client.session.update, {
+            sessionId: params.sessionId,
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: result.response },
+            },
+          });
         }
-        await updates;
 
         if (result.status === "SUCCESS") {
           return { stopReason: "end_turn" };
@@ -148,7 +145,6 @@ export function createAgyAgent(service: AgySessionService): AgentApp {
         }
         throw RequestError.internalError(undefined, "agy execution failed");
       } catch (error) {
-        await updates;
         if (
           error instanceof AgyProcessControllerError &&
           error.code === "CANCELLED"

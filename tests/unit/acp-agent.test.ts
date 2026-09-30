@@ -6,12 +6,15 @@ import {
 } from "@agentclientprotocol/sdk";
 import { describe, expect, it } from "vitest";
 
-import type { AgyEvent, AgyResultEvent } from "../../src/agy-events.js";
+import type { AgyResultEvent } from "../../src/agy-events.js";
 import {
   createAgyAgent,
   type AgySessionService,
 } from "../../src/acp-agent.js";
-import { AgyProcessControllerError } from "../../src/process-controller.js";
+import {
+  AgyProcessControllerError,
+  type AgyEventListener,
+} from "../../src/process-controller.js";
 import type {
   CreateSessionOptions,
   LoadSessionOptions,
@@ -53,10 +56,10 @@ class FakeSessionService implements AgySessionService {
   public prompt(
     sessionId: string,
     input: unknown,
-    onEvent?: (event: AgyEvent) => void,
+    onEvent?: AgyEventListener,
   ): Promise<AgyResultEvent> {
     this.prompts.push({ sessionId, input });
-    onEvent?.({
+    const emitted = onEvent?.({
       kind: "step_update",
       conversationId: sessionId,
       stepIndex: 0,
@@ -66,10 +69,12 @@ class FakeSessionService implements AgySessionService {
       durationSeconds: undefined,
       usage: undefined,
     });
-    if (this.promptError !== undefined) {
-      return Promise.reject(this.promptError);
-    }
-    return Promise.resolve({ ...this.promptResult, conversationId: sessionId });
+    return Promise.resolve(emitted).then(() => {
+      if (this.promptError !== undefined) {
+        throw this.promptError;
+      }
+      return { ...this.promptResult, conversationId: sessionId };
+    });
   }
 
   public cancel(sessionId: string): Promise<void> {

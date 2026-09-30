@@ -78,6 +78,8 @@ Prompt timeout도 같은 종료 절차를 사용하지만 `cancelled`가 아니�
 ## Backpressure와 bounded resource
 
 - stdin write가 `false`를 반환하면 `drain` 후 다음 message를 씁니다.
+- stdout event listener는 async completion을 반환할 수 있으며, downstream ACP notification이 끝날 때까지 child stdout을 pause합니다.
+- Event batch는 순서대로 하나씩 처리하고 최신 batch가 성공한 뒤에만 stdout을 resume합니다. Listener rejection은 즉시 typed failure와 bounded shutdown으로 전환합니다.
 - stdout은 chunk 경계를 신뢰하지 않고 newline 기준 bounded parser로 처리합니다.
 - 최대 line bytes, stderr ring bytes, init/prompt/cancel timeout은 중앙 configuration에서 제한합니다.
 - parser error 이후 해당 process의 추가 output은 신뢰하지 않고 종료합니다.
