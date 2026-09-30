@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: 실제 child streams를 관리하는 ProcessController에 init timeout, stdout event parsing, bounded stderr, write backpressure를 RED test로 추가합니다.
+- 다음 작업: ProcessController에 graceful SIGTERM→hard kill, idempotent close, prompt timeout/cancel terminal transition, listener·timer cleanup을 RED test로 추가합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -46,6 +46,8 @@
 - [x] `agy` init·step_update·result를 normalized typed union으로 검증하고 unknown event를 forward-compatible하게 보존하는 parser를 RED test 후 구현했습니다.
 - [x] Event parser targeted 10/10, 전체 unit 18/18, typecheck, lint, build 통과.
 - [x] `agy` invocation builder와 spawn boundary를 RED test 후 구현했습니다. Attached argv, absolute path, literal injection-like 값, conversation/add-dir, `shell:false`, piped stdio, caller env 상속을 targeted 7/7로 검증했습니다.
+- [x] ProcessController의 split init, typed stdout dispatch, single fatal failure, init timeout, pre-init exit, bounded stderr metadata, drain backpressure를 RED test 후 구현했습니다.
+- [x] ProcessController targeted 7/7, 전체 unit 32/32, typecheck, lint, build 통과.
 
 ## 진행 중
 
@@ -56,7 +58,8 @@
 - [x] bounded NDJSON parser
 - [x] typed agy event parser
 - [x] shell 없는 argv/spawn boundary
-- [ ] ProcessController lifecycle
+- [x] ProcessController init·stream·backpressure
+- [ ] ProcessController cancel·timeout·cleanup
 
 ## 대기
 

@@ -22,3 +22,12 @@ export type {
   AgySpawnFunction,
   AgySpawnOptions,
 } from "./agy-process.js";
+export {
+  AgyProcessController,
+  AgyProcessControllerError,
+} from "./process-controller.js";
+export type {
+  AgyProcessControllerErrorCode,
+  AgyProcessControllerOptions,
+  AgyProcessDiagnostics,
+} from "./process-controller.js";
