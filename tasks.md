@@ -1,0 +1,43 @@
+# agy-acp 작업 기록
+
+## 상태
+
+- 현재 단계: 프로토콜 계약 확정
+- 작업 branch: `feat/agy-acp-bridge`
+- 다음 작업: 실제 `agy` stream-json 정상 응답을 안전한 최소 prompt로 수집하고 ACP v1 method 목록과 비교합니다.
+- 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
+
+## 완료한 작업
+
+### 2026-09-30
+
+- [x] 저장소 작업 규칙을 `AGENTS.md`로 작성하고 PR #1로 merge했습니다.
+- [x] 최신 `main`에서 `feat/agy-acp-bridge` branch를 생성했습니다.
+- [x] 설치된 `agy` 버전이 `1.2.14`임을 확인했습니다.
+- [x] `agy`가 `--input-format stream-json`과 `--output-format stream-json`을 지원함을 확인했습니다.
+- [x] 공식 ACP 문서에서 v1이 Latest, v2가 Draft임을 확인했습니다.
+- [x] 공식 TypeScript SDK가 `@agentclientprotocol/sdk`이며 신규 구현은 fluent `agent()` API를 사용해야 함을 확인했습니다.
+- [x] ACP local agent가 JSON-RPC over stdio를 사용하고 한 연결에서 여러 session 및 bidirectional request를 지원함을 확인했습니다.
+- [x] 구현 범위와 완료 게이트를 `roadmap.md`에 작성했습니다.
+
+## 진행 중
+
+- [ ] `agy` stream-json protocol fixture 수집
+- [ ] ACP v1 method·capability 목록 확정
+- [ ] ACP↔`agy` 변환 계약 작성
+
+## 대기
+
+- [ ] GitHub Actions 실행: 사용량이 복구될 때까지 실행 전 quota 실패는 허용하되 workflow는 작성합니다.
+
+## 반복 운영 규칙
+
+각 monitoring cycle에서 다음 순서로 진행합니다.
+
+1. `roadmap.md`, `tasks.md`, Git 상태를 읽습니다.
+2. 완료되지 않은 가장 작은 검증 가능한 작업 하나를 선택합니다.
+3. 구현 또는 테스트를 수행합니다.
+4. 관련 local 검증을 실행합니다.
+5. 증거가 확인된 항목만 `roadmap.md`에서 완료 처리하고 `tasks.md`에 결과와 다음 작업을 기록합니다.
+6. roadmap이 남아 있으면 다음 cycle을 계속하고, 모두 완료되면 최종 리뷰·PR·merge를 수행한 뒤 loop를 종료합니다.
+7. 자격 증명, 토큰, 인증 파일 내용은 읽거나 출력하지 않습니다.
