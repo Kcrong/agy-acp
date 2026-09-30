@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: bounded NDJSON parser의 정상·분할 chunk·oversized line·malformed JSON RED unit test와 구현을 추가합니다.
+- 다음 작업: 관찰한 agy event를 typed union으로 검증하고 shell 없는 ProcessController의 argv·spawn·init lifecycle RED test를 작성합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -42,6 +42,7 @@
 - [x] Node `>=22.13.0`, TypeScript `5.9.3`, ACP SDK `1.5.1`, Vitest `5.0.2`, ESLint `10.11.0` 기반 strict ESM scaffold와 exact lockfile을 구성했습니다.
 - [x] ESLint type-aware config를 TypeScript 파일로 제한해 자체 JavaScript config parsing 실패를 수정했습니다.
 - [x] `npm run check`: lint, typecheck, unit 2/2, E2E command, build 통과.
+- [x] bounded NDJSON parser를 RED test 후 구현하고 arbitrary chunk, multibyte UTF-8, CRLF, blank line, exact/oversized line, malformed JSON, invalid UTF-8, final record, closed state unit 6/6을 통과했습니다.
 
 ## 진행 중
 
@@ -49,7 +50,8 @@
 - [x] ACP v1 method·capability 목록 확정
 - [x] ACP↔`agy` 변환 계약 작성
 - [x] TypeScript strict ESM project scaffold
-- [ ] bounded NDJSON parser
+- [x] bounded NDJSON parser
+- [ ] typed agy event parser와 ProcessController
 
 ## 대기
 
