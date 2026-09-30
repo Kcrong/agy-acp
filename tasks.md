@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: public-release readiness loop round 3 — PR #4 CI and merge gate
-- 작업 branch: `chore/public-release-readiness`
-- merged baseline: PR #2, `main` `343ded8`
+- 현재 단계: public-release readiness loop round 4 — external and human launch gates
+- 작업 branch: `chore/public-launch-gates`
+- merged baseline: PR #4, `main` `6c51778`
 - repository state: PRIVATE. Public visibility 전환과 default-history replacement는 마지막 human-only gate입니다.
-- 다음 작업: final status-only diff를 독립 검토하고 PR #4를 merge한 뒤, hosted quota와 human-only public transition gates를 계속 추적합니다.
+- 다음 작업: Actions capacity 복구를 주기적으로 확인하고, hosted green 이후 root metadata·eligible reviewer·visibility를 하나의 explicit launch decision으로 요청합니다.
 - 완료 조건: secret·machine data scan clean, hosted multi-OS gate, independent public-readiness review, readiness PR merge, explicit visibility approval, post-public ruleset/security verification. npm publish는 별도 explicit release gate입니다.
 
 ## 조사 메모
@@ -206,12 +206,17 @@
 - [x] `57aeb94` independent review: Critical 0, High 0, Medium 1, Low 1 — stale hosted-CI 완료 표기와 non-actionable conduct contact를 발견했습니다.
 - [x] Hosted status를 workflow/attempt evidence로 정정하고 conduct concern을 public-launch private report form으로 연결했습니다.
 - [ ] Low: root/retained machine identity를 accept 또는 remediate 결정합니다.
+- [x] Root decision analysis: current-main rewrite만으로는 retained PR/Actions objects의 older identity가 남습니다. Current repo에서 Low metadata를 명시적으로 accept하거나, zero-metadata가 필수이면 clean squashed public repository를 새로 만드는 두 경로만 완전합니다. Main force rewrite 단독은 권장하지 않습니다.
 - [x] Low Actions policy: repository-level full commit SHA pinning을 enabled로 전환했습니다.
 - [x] Low community metadata: description·5 topics, Code of Conduct, CODEOWNERS, concise PR template, bug/feature forms, security routing을 추가하고 YAML/package exclusion을 검증했습니다.
 - [x] Low package gate: `prepack`에 full check + package smoke를 포함하고 outer npm dry-run inheritance regression을 수정했습니다.
 - [x] Public-readiness metadata/docs/settings를 구현·검증하고 [PR #4](https://github.com/Kcrong/agy-acp/pull/4)를 concise English body로 생성했습니다.
 - [x] `06cf88b` focused re-review: Critical 0, High 0, Medium 0, Low 0 — PASS.
 - [x] PR #4 exact-head run `36745830565`: 4 jobs 모두 `runner_id=0`, steps 0인 pre-allocation failure로 code steps가 실행되지 않았습니다.
+- [x] [PR #4](https://github.com/Kcrong/agy-acp/pull/4)를 squash merge했고 `main` `6c51778` tree가 reviewed head와 동일함을 확인했습니다.
+- [x] Merged-main run `36746762176`도 4 jobs 모두 runner 미할당·steps 0으로 pre-allocation 실패했습니다.
+- [x] Owner 외 direct collaborator와 required-review eligible reviewer는 모두 0명입니다.
+- [x] Merged community profile은 100%이며 Code of Conduct, CONTRIBUTING, license, PR template, README가 인식되고 issue forms도 tracked 상태입니다.
 - [ ] Hosted matrix, default-history replacement, visibility flip, npm publish의 외부/human gates를 순서대로 처리합니다.
 
 ## 반복 운영 규칙

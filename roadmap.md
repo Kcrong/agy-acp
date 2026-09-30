@@ -90,6 +90,6 @@
 - [ ] Public 전환 전에 default branch ruleset에 required hosted checks와 approving review 1개를 추가하고, 전환 후 deletion·non-fast-forward·squash-only PR 보호와 함께 active인지 재검증합니다. GitHub가 자동 disable하는 대상은 별도 push rulesets입니다.
 - [ ] Actions quota 복구 후 Linux Node 22/24, macOS Node 22, Windows Node 22 hosted matrix가 실제 runner에서 통과합니다.
 - [x] Public repository community profile, `SECURITY.md`, license, contribution docs, issue settings와 package metadata를 독립 검토했습니다.
-- [ ] Public-readiness 변경을 concise English PR로 제출하고 Critical·High finding 0과 local/package/real smoke를 확보한 뒤 merge합니다.
+- [x] Public-readiness 변경을 concise English [PR #4](https://github.com/Kcrong/agy-acp/pull/4)로 제출하고 Critical·High finding 0과 local/package/real smoke를 확보한 뒤 merge했습니다.
 - [ ] Explicit visibility approval 후 repository를 public으로 전환하고 visibility, ruleset, secret scanning, push protection, private vulnerability reporting을 재검증합니다.
 - [ ] npm `@kcrong` scope 권한을 사용자 인증으로 확인하고, 별도 explicit release approval 후에만 `private:true` 제거와 최초 publish를 수행합니다.
