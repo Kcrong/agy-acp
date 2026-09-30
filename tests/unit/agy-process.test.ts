@@ -110,7 +110,7 @@ describe("spawnAgyProcess", () => {
 });
 
 describe("signalAgyProcessTree", () => {
-  it("signals the detached POSIX process group", () => {
+  it("signals the detached POSIX process group", async () => {
     const directSignals: NodeJS.Signals[] = [];
     const groupSignals: Array<[number, NodeJS.Signals]> = [];
     const child = {
@@ -121,26 +121,29 @@ describe("signalAgyProcessTree", () => {
       },
     } as ChildProcessWithoutNullStreams;
 
-    signalAgyProcessTree(child, "SIGTERM", {
+    await signalAgyProcessTree(child, "SIGTERM", {
       platform: "linux",
-      signalGroup: (pid, signal) => groupSignals.push([pid, signal]),
+      signalGroup: (pid, signal) => {
+        groupSignals.push([pid, signal]);
+      },
     });
 
     expect(groupSignals).toEqual([[-4321, "SIGTERM"]]);
     expect(directSignals).toEqual([]);
   });
 
-  it("uses the Windows tree terminator with force only for SIGKILL", () => {
+  it("uses the Windows tree terminator with force only for SIGKILL", async () => {
     const calls: Array<[number, boolean]> = [];
     const child = { pid: 1234, kill: () => true } as ChildProcessWithoutNullStreams;
     const options = {
       platform: "win32" as const,
-      signalWindowsTree: (pid: number, force: boolean) =>
-        calls.push([pid, force]),
+      signalWindowsTree: (pid: number, force: boolean) => {
+        calls.push([pid, force]);
+      },
     };
 
-    signalAgyProcessTree(child, "SIGTERM", options);
-    signalAgyProcessTree(child, "SIGKILL", options);
+    await signalAgyProcessTree(child, "SIGTERM", options);
+    await signalAgyProcessTree(child, "SIGKILL", options);
 
     expect(calls).toEqual([
       [1234, false],
@@ -158,14 +161,44 @@ describe("signalAgyProcessTree", () => {
       },
     } as ChildProcessWithoutNullStreams;
 
-    signalAgyProcessTree(child, "SIGKILL", {
+    await signalAgyProcessTree(child, "SIGKILL", {
       platform: "win32",
-      signalWindowsTree: (_pid, _force, onFailure) =>
-        queueMicrotask(onFailure),
+      signalWindowsTree: async () => {
+        await Promise.resolve();
+        throw new Error("taskkill failed");
+      },
     });
 
-    expect(directSignals).toEqual([]);
-    await Promise.resolve();
     expect(directSignals).toEqual(["SIGKILL"]);
+  });
+});
+
+describe("signalAgyProcessTree completion barrier", () => {
+  it("waits for the asynchronous Windows tree terminator", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const child = {
+      pid: 1234,
+      kill: () => true,
+    } as ChildProcessWithoutNullStreams;
+    let settled = false;
+
+    const signaling = Promise.resolve(
+      signalAgyProcessTree(child, "SIGKILL", {
+        platform: "win32",
+        signalWindowsTree: async () => gate,
+      }),
+    ).then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    release();
+    await signaling;
+    expect(settled).toBe(true);
   });
 });

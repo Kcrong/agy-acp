@@ -106,19 +106,22 @@ export function spawnAgyProcess(
 
 export interface AgyProcessTreeSignalOptions {
   readonly platform?: NodeJS.Platform;
-  readonly signalGroup?: (pid: number, signal: NodeJS.Signals) => void;
+  readonly timeoutMs?: number;
+  readonly signalGroup?: (
+    pid: number,
+    signal: NodeJS.Signals,
+  ) => void | Promise<void>;
   readonly signalWindowsTree?: (
     pid: number,
     force: boolean,
-    onFailure: () => void,
-  ) => void;
+  ) => void | Promise<void>;
 }
 
-export function signalAgyProcessTree(
+export async function signalAgyProcessTree(
   child: ChildProcessWithoutNullStreams,
   signal: NodeJS.Signals,
   options: AgyProcessTreeSignalOptions = {},
-): void {
+): Promise<void> {
   const pid = child.pid;
   if (pid === undefined || pid <= 0) {
     child.kill(signal);
@@ -136,16 +139,18 @@ export function signalAgyProcessTree(
   try {
     if ((options.platform ?? process.platform) === "win32") {
       if (options.signalWindowsTree === undefined) {
-        defaultSignalWindowsTree(pid, signal, signalDirect);
-      } else {
-        options.signalWindowsTree(
+        await defaultSignalWindowsTree(
           pid,
-          signal === "SIGKILL",
-          signalDirect,
+          signal,
+          options.timeoutMs ?? 5_000,
         );
+      } else {
+        await options.signalWindowsTree(pid, signal === "SIGKILL");
       }
+    } else if (options.signalGroup === undefined) {
+      process.kill(-pid, signal);
     } else {
-      (options.signalGroup ?? process.kill)(-pid, signal);
+      await options.signalGroup(-pid, signal);
     }
   } catch {
     signalDirect();
@@ -155,8 +160,8 @@ export function signalAgyProcessTree(
 function defaultSignalWindowsTree(
   pid: number,
   signal: NodeJS.Signals,
-  onFailure: () => void,
-): void {
+  timeoutMs: number,
+): Promise<void> {
   const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
   const command = win32.join(systemRoot, "System32", "taskkill.exe");
   const args = ["/PID", String(pid), "/T"];
@@ -164,17 +169,25 @@ function defaultSignalWindowsTree(
     args.push("/F");
   }
 
-  const killer = execFile(
-    command,
-    args,
-    { windowsHide: true },
-    (error) => {
-      if (error !== null) {
-        onFailure();
-      }
-    },
-  );
-  killer.unref();
+  return new Promise<void>((resolve, reject) => {
+    // Keep taskkill referenced so the server cannot exit before its callback.
+    execFile(
+      command,
+      args,
+      { timeout: timeoutMs, windowsHide: true },
+      (error) => {
+        if (error === null) {
+          resolve();
+        } else {
+          reject(
+            new Error("Windows process-tree termination failed", {
+              cause: error,
+            }),
+          );
+        }
+      },
+    );
+  });
 }
 
 function requireAbsolutePath(value: string, field: string): void {

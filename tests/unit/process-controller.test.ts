@@ -194,6 +194,7 @@ describe("AgyProcessController", () => {
     await vi.advanceTimersByTimeAsync(10);
     expect(fake.signals).toEqual(["SIGTERM"]);
     fake.emitExit(null, "SIGTERM");
+    await vi.advanceTimersByTimeAsync(LIMITS.hardKillGraceMs);
     await assertion;
   });
 
@@ -349,7 +350,7 @@ describe("AgyProcessController turn lifecycle", () => {
 
     expect(second).toBe(first);
     expect(fake.stdin.writableEnded).toBe(true);
-    expect(fake.signals).toEqual([]);
+    expect(fake.signals).toEqual(["SIGTERM"]);
 
     fake.emitExit(0);
     await first;
@@ -630,5 +631,65 @@ describe("AgyProcessController exit-result arbitration", () => {
 
     await expect(turn).rejects.toMatchObject({ code: "PROCESS_EXITED" });
     fake.emitClose(7);
+  });
+});
+
+describe("AgyProcessController final shutdown barriers", () => {
+  it("hard-kills the process tree before resolving after direct-child close", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+    let settled = false;
+
+    const closing = controller.close().then(() => {
+      settled = true;
+    });
+    fake.emitExit(0);
+    await immediate();
+    await immediate();
+
+    expect(fake.signals).toContain("SIGKILL");
+    expect(settled).toBe(false);
+
+    await closing;
+    expect(settled).toBe(true);
+  });
+
+  it("applies the final cleanup grace after hard termination", async () => {
+    vi.useFakeTimers();
+    const fake = createFakeProcess();
+    const controller = await startReady(fake, {
+      cancelGraceMs: 20,
+      hardKillGraceMs: 30,
+    });
+    let settled = false;
+    const closing = controller.close().then(() => {
+      settled = true;
+    });
+
+    expect(fake.signals).toEqual(["SIGTERM"]);
+
+    await vi.advanceTimersByTimeAsync(20);
+    expect(fake.signals).toEqual(["SIGTERM", "SIGKILL"]);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(29);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await closing;
+    expect(settled).toBe(true);
+  });
+
+  it("rejects a new turn after exit even before close", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+
+    fake.emitExitOnly(0);
+
+    expect(controller.isClosed).toBe(true);
+    await expect(controller.runTurn({ event: "user" })).rejects.toMatchObject({
+      code: "PROCESS_CLOSED",
+    });
+    fake.emitClose(0);
   });
 });

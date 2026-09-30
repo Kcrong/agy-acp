@@ -89,6 +89,8 @@ export class AgyProcessController implements ManagedAgyProcess {
   #activeTurn: ActiveTurn | undefined;
   #shutdownPromise: Promise<void> | undefined;
   #resolveShutdown: (() => void) | undefined;
+  #signalBarrier: Promise<void> = Promise.resolve();
+  #hardKillPromise: Promise<void> | undefined;
   #terminationTimer: NodeJS.Timeout | undefined;
   #hardKillTimer: NodeJS.Timeout | undefined;
   #conversationId: string | undefined;
@@ -176,7 +178,7 @@ export class AgyProcessController implements ManagedAgyProcess {
   }
 
   public get isClosed(): boolean {
-    return this.#closed;
+    return this.#closed || this.#processExited;
   }
 
   public get diagnostics(): AgyProcessDiagnostics {
@@ -199,7 +201,12 @@ export class AgyProcessController implements ManagedAgyProcess {
   }
 
   public async send(value: unknown): Promise<void> {
-    if (this.#closed || this.#failed || this.#conversationId === undefined) {
+    if (
+      this.#closed ||
+      this.#failed ||
+      this.#processExited ||
+      this.#conversationId === undefined
+    ) {
       throw new AgyProcessControllerError("PROCESS_CLOSED");
     }
 
@@ -228,7 +235,12 @@ export class AgyProcessController implements ManagedAgyProcess {
     if (this.#activeTurn !== undefined) {
       return Promise.reject(new AgyProcessControllerError("PROCESS_BUSY"));
     }
-    if (this.#closed || this.#failed || this.#conversationId === undefined) {
+    if (
+      this.#closed ||
+      this.#failed ||
+      this.#processExited ||
+      this.#conversationId === undefined
+    ) {
       return Promise.reject(new AgyProcessControllerError("PROCESS_CLOSED"));
     }
 
@@ -236,7 +248,7 @@ export class AgyProcessController implements ManagedAgyProcess {
       const timer = setTimeout(() => {
         const error = new AgyProcessControllerError("PROMPT_TIMEOUT");
         this.#rejectActiveTurn(error);
-        void this.#beginShutdown(true);
+        void this.#beginShutdown();
       }, this.#limits.promptTimeoutMs);
       timer.unref();
       this.#activeTurn = { resolve, reject, timer };
@@ -259,7 +271,7 @@ export class AgyProcessController implements ManagedAgyProcess {
     }
 
     this.#rejectActiveTurn(new AgyProcessControllerError("CANCELLED"));
-    return this.#beginShutdown(true);
+    return this.#beginShutdown();
   }
 
   public close(): Promise<void> {
@@ -272,7 +284,7 @@ export class AgyProcessController implements ManagedAgyProcess {
     }
 
     this.#rejectActiveTurn(new AgyProcessControllerError("PROCESS_CLOSED"));
-    return this.#beginShutdown(false);
+    return this.#beginShutdown();
   }
 
   readonly #handleStartupAbort = (): void => {
@@ -365,7 +377,7 @@ export class AgyProcessController implements ManagedAgyProcess {
     const pendingEvents = this.#eventQueue;
     void pendingEvents.then(() => {
       if (this.#shutdownPromise !== undefined) {
-        this.#finalizeShutdown();
+        void this.#startHardKill();
         return;
       }
 
@@ -488,7 +500,7 @@ export class AgyProcessController implements ManagedAgyProcess {
     this.#clearInitTimer();
     this.#rejectActiveTurn(error);
     if (terminate && !this.#closed) {
-      void this.#beginShutdown(true);
+      void this.#beginShutdown();
     }
 
     if (!this.#readySettled) {
@@ -513,7 +525,7 @@ export class AgyProcessController implements ManagedAgyProcess {
     active.reject(error);
   }
 
-  #beginShutdown(immediateTermination: boolean): Promise<void> {
+  #beginShutdown(): Promise<void> {
     if (this.#shutdownPromise !== undefined) {
       return this.#shutdownPromise;
     }
@@ -530,34 +542,52 @@ export class AgyProcessController implements ManagedAgyProcess {
       this.#resolveShutdown = resolve;
     });
 
-    if (immediateTermination) {
-      this.#sendSignal("SIGTERM");
-      this.#terminationTimer = setTimeout(() => {
-        this.#sendSignal("SIGKILL");
-        this.#hardKillTimer = setTimeout(() => {
-          this.#finalizeShutdown();
-        }, this.#limits.hardKillGraceMs);
-        this.#hardKillTimer.unref();
-      }, this.#limits.cancelGraceMs);
-      this.#terminationTimer.unref();
-    } else {
-      this.#terminationTimer = setTimeout(() => {
-        this.#sendSignal("SIGTERM");
-        this.#hardKillTimer = setTimeout(() => {
-          this.#sendSignal("SIGKILL");
-          this.#finalizeShutdown();
-        }, this.#limits.hardKillGraceMs);
-        this.#hardKillTimer.unref();
-      }, this.#limits.cancelGraceMs);
-      this.#terminationTimer.unref();
-    }
+    this.#signalBarrier = this.#sendSignal("SIGTERM");
+    this.#terminationTimer = setTimeout(() => {
+      void this.#startHardKill();
+    }, this.#limits.cancelGraceMs);
+    this.#terminationTimer.unref();
 
     return this.#shutdownPromise;
   }
 
-  #sendSignal(signal: NodeJS.Signals): void {
+  #startHardKill(): Promise<void> {
+    if (this.#hardKillPromise !== undefined) {
+      return this.#hardKillPromise;
+    }
+    if (this.#terminationTimer !== undefined) {
+      clearTimeout(this.#terminationTimer);
+      this.#terminationTimer = undefined;
+    }
+
+    const hardKill = this.#signalBarrier.then(() =>
+      this.#sendSignal("SIGKILL"),
+    );
+    this.#signalBarrier = hardKill;
+    this.#hardKillPromise = hardKill;
+    void hardKill.then(() => {
+      if (
+        this.#resolveShutdown === undefined ||
+        this.#hardKillTimer !== undefined
+      ) {
+        return;
+      }
+      this.#hardKillTimer = setTimeout(() => {
+        this.#finalizeShutdown();
+      }, this.#limits.hardKillGraceMs);
+      this.#hardKillTimer.unref();
+    });
+    return hardKill;
+  }
+
+  async #sendSignal(signal: NodeJS.Signals): Promise<void> {
     try {
-      signalAgyProcessTree(this.#child, signal);
+      await signalAgyProcessTree(this.#child, signal, {
+        timeoutMs:
+          signal === "SIGTERM"
+            ? this.#limits.cancelGraceMs
+            : this.#limits.hardKillGraceMs,
+      });
     } catch {
       // A concurrent exit is equivalent to successful termination.
     }
