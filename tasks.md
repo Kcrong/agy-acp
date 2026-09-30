@@ -5,13 +5,18 @@
 - 현재 단계: 프로토콜 계약 확정
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
-- 다음 작업: `--print=''`를 명시한 실제 `agy` stream-json 정상 응답 probe로 event 구조를 수집합니다.
+- 다음 작업: `step_update`의 비민감 nested key 구조를 수집하고, malformed input·process cancellation fixture를 확보합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
 
-- `--print`는 문자열 인자를 요구합니다. flag 뒤에 다른 flag를 두면 그 값을 prompt로 소비하고, bare `--print`는 parser 단계에서 거부됩니다.
-- 앞선 두 probe는 parser에서 종료되어 model 호출이나 자격 증명 접근이 발생하지 않았습니다.
+- `--print`는 문자열 인자를 요구합니다. stream mode 시작은 다른 flag 뒤에 `--print=''`를 명시합니다.
+- stream input 최상위에는 `event`가 필수이며, 정상 user turn은 `{"event":"user","message":...}` 형식을 사용합니다.
+- 알 수 없는 input event는 warning 후 무시되며 process는 성공 종료합니다.
+- 정상 출력 순서는 `init` → `step_update` 1개 이상 → `result`입니다.
+- `init`은 `cwd`, `permission_mode`, `tools`를 포함하고, terminal `result`는 `conversation_id`, `duration_seconds`, `error`, `num_turns`, `response`, `status`, `usage`를 포함합니다.
+- 실제 최소 turn은 `result.status=SUCCESS`로 완료됐으며 응답 본문과 자격 증명은 출력하지 않았습니다.
+- binary 전체 `strings` 검색은 Go 문자열 테이블이 합쳐져 schema 판별에 사용할 수 없어 폐기했습니다.
 
 ## 완료한 작업
 
