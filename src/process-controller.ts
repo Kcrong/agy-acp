@@ -235,6 +235,10 @@ export class AgyProcessController implements ManagedAgyProcess {
     if (this.#shutdownPromise !== undefined) {
       return this.#shutdownPromise;
     }
+    if (this.#closed) {
+      this.#cleanupListeners();
+      return Promise.resolve();
+    }
 
     this.#rejectActiveTurn(new AgyProcessControllerError("PROCESS_CLOSED"));
     return this.#beginShutdown(false);

@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: cancel-before-active, retiring process overlap, disconnect-during-start, concurrent load를 재현하는 RED tests를 추가하고 SessionManager를 closed/starting/retiring/pending-prompt state machine으로 수정합니다.
+- 다음 작업: child stdout→ACP notification 경로에 bounded async queue와 pause/resume backpressure를 추가하고 slow client·notification failure RED tests를 구현합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -86,6 +86,16 @@
 - Medium remediation: stdout EOF/child close ordering, write failure retire, session admission limit, process-tree termination, executable absolute resolution, concurrent load reservation, SDK request AbortSignal, event phase ordering, invalid path error mapping, backend text 기반 cancel 오분류.
 - Public 후속: packed clean smoke는 이미 local 통과했습니다. Windows process E2E와 hosted matrix는 Actions quota 복구 후 필요하며 `private:true` 제거와 root history rewrite는 실제 공개 release gate로 유지합니다.
 - Low corrections: packaged README의 SECURITY link, CI npm version 계약, unknown-event diagnostic 문서 정확성.
+
+## 리뷰 지적 수정 기록
+
+- [x] cancel-before-active: prompt를 첫 await 전에 reserve하고 cancel marker를 `runTurn` 직전에 재검사합니다.
+- [x] retiring overlap: controller pointer를 shutdown 완료 전까지 유지하고 같은 session restart가 retirement barrier를 기다립니다.
+- [x] disconnect startup leak: manager closed state, tracked startup, shared idempotent `closeAll` barrier로 late controller를 닫습니다.
+- [x] concurrent load: session ID를 factory await 전에 reserve해 duplicate controller 생성을 차단합니다.
+- [x] Unexpected child exit 뒤 `close()`가 새 7초 timer를 만들던 E2E regression을 즉시-resolved cleanup으로 수정했습니다.
+- [x] SessionManager 11/11 + ProcessController 13/13, targeted 합계 24/24, failure E2E 6/6, typecheck, lint 통과.
+- [ ] Downstream notification backpressure High 수정.
 
 ## 진행 중
 

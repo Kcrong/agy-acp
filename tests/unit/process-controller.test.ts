@@ -342,3 +342,16 @@ describe("AgyProcessController turn lifecycle", () => {
     expect(fake.stderr.listenerCount("data")).toBe(0);
   });
 });
+
+describe("AgyProcessController closed cleanup", () => {
+  it("closes immediately after an unexpected process exit", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+
+    fake.emitExit(7);
+
+    await expect(controller.close()).resolves.toBeUndefined();
+    expect(fake.signals).toEqual([]);
+    expect(fake.child.listenerCount("exit")).toBe(0);
+  });
+});

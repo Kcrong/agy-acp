@@ -3,6 +3,7 @@ import type { AgyInvocationOptions } from "./agy-process.js";
 import type { RuntimeLimits } from "./config.js";
 import {
   AgyProcessController,
+  AgyProcessControllerError,
   type ManagedAgyProcess,
 } from "./process-controller.js";
 
@@ -10,7 +11,9 @@ export type SessionManagerErrorCode =
   | "UNKNOWN_SESSION"
   | "SESSION_EXISTS"
   | "SESSION_ID_MISMATCH"
-  | "INVALID_SESSION";
+  | "INVALID_SESSION"
+  | "MANAGER_CLOSED"
+  | "SESSION_BUSY";
 
 export interface SessionManagerOptions {
   readonly limits: RuntimeLimits;
@@ -31,12 +34,21 @@ export type AgyControllerFactory = (
   invocation: AgyInvocationOptions,
 ) => Promise<ManagedAgyProcess>;
 
+interface PendingPrompt {
+  cancelled: boolean;
+  active: boolean;
+  controller: ManagedAgyProcess | undefined;
+}
+
 interface SessionRecord {
   readonly sessionId: string;
   readonly cwd: string;
   readonly additionalDirectories: readonly string[];
   controller: ManagedAgyProcess | undefined;
   starting: Promise<ManagedAgyProcess> | undefined;
+  retiring: Promise<void> | undefined;
+  prompt: PendingPrompt | undefined;
+  closed: boolean;
 }
 
 export class SessionManagerError extends Error {
@@ -53,6 +65,10 @@ export class SessionManager {
   readonly #options: SessionManagerOptions;
   readonly #factory: AgyControllerFactory;
   readonly #sessions = new Map<string, SessionRecord>();
+  readonly #pendingStarts = new Set<Promise<void>>();
+  readonly #reservedSessionIds = new Set<string>();
+  #closed = false;
+  #closePromise: Promise<void> | undefined;
 
   public constructor(
     options: SessionManagerOptions,
@@ -73,83 +89,172 @@ export class SessionManager {
   }
 
   public async createSession(options: CreateSessionOptions): Promise<string> {
-    const controller = await this.#factory(this.#buildInvocation(options));
-    const sessionId = controller.conversationId;
+    this.#assertOpen();
+    return this.#trackStart(async () => {
+      const controller = await this.#factory(this.#buildInvocation(options));
+      if (this.#closed) {
+        await controller.close();
+        throw new SessionManagerError("MANAGER_CLOSED");
+      }
 
-    if (this.#sessions.has(sessionId)) {
-      await controller.close();
-      throw new SessionManagerError("SESSION_EXISTS");
-    }
+      const sessionId = controller.conversationId;
+      if (
+        this.#sessions.has(sessionId) ||
+        this.#reservedSessionIds.has(sessionId)
+      ) {
+        await controller.close();
+        throw new SessionManagerError("SESSION_EXISTS");
+      }
 
-    const record = this.#newRecord(sessionId, options, controller);
-    this.#sessions.set(sessionId, record);
-    this.#watchFailure(record, controller);
-    return sessionId;
+      const record = this.#newRecord(sessionId, options, controller);
+      this.#sessions.set(sessionId, record);
+      this.#watchFailure(record, controller);
+      return sessionId;
+    });
   }
 
   public async loadSession(options: LoadSessionOptions): Promise<string> {
+    this.#assertOpen();
     requireSessionId(options.sessionId);
-    if (this.#sessions.has(options.sessionId)) {
-      throw new SessionManagerError("SESSION_EXISTS");
+    if (
+      this.#sessions.has(options.sessionId) ||
+      this.#reservedSessionIds.has(options.sessionId)
+    ) {
+      return Promise.reject(new SessionManagerError("SESSION_EXISTS"));
     }
 
-    const controller = await this.#factory(
-      this.#buildInvocation(options, options.sessionId),
-    );
-    if (controller.conversationId !== options.sessionId) {
-      await controller.close();
-      throw new SessionManagerError("SESSION_ID_MISMATCH");
-    }
+    this.#reservedSessionIds.add(options.sessionId);
+    return this.#trackStart(async () => {
+      try {
+        const controller = await this.#factory(
+          this.#buildInvocation(options, options.sessionId),
+        );
+        if (this.#closed) {
+          await controller.close();
+          throw new SessionManagerError("MANAGER_CLOSED");
+        }
+        if (controller.conversationId !== options.sessionId) {
+          await controller.close();
+          throw new SessionManagerError("SESSION_ID_MISMATCH");
+        }
+        if (this.#sessions.has(options.sessionId)) {
+          await controller.close();
+          throw new SessionManagerError("SESSION_EXISTS");
+        }
 
-    const record = this.#newRecord(options.sessionId, options, controller);
-    this.#sessions.set(options.sessionId, record);
-    this.#watchFailure(record, controller);
-    return options.sessionId;
+        const record = this.#newRecord(options.sessionId, options, controller);
+        this.#sessions.set(options.sessionId, record);
+        this.#watchFailure(record, controller);
+        return options.sessionId;
+      } finally {
+        this.#reservedSessionIds.delete(options.sessionId);
+      }
+    });
   }
 
-  public async prompt(
+  public prompt(
     sessionId: string,
     input: unknown,
     onEvent?: (event: AgyEvent) => void,
   ): Promise<AgyResultEvent> {
     const record = this.#requireRecord(sessionId);
-    const controller = await this.#ensureController(record);
-    const unsubscribe =
-      onEvent === undefined ? undefined : controller.onEvent(onEvent);
+    if (record.prompt !== undefined) {
+      return Promise.reject(new SessionManagerError("SESSION_BUSY"));
+    }
+
+    const pending: PendingPrompt = {
+      cancelled: false,
+      active: false,
+      controller: undefined,
+    };
+    record.prompt = pending;
+    return this.#runPrompt(record, pending, input, onEvent);
+  }
+
+  async #runPrompt(
+    record: SessionRecord,
+    pending: PendingPrompt,
+    input: unknown,
+    onEvent?: (event: AgyEvent) => void,
+  ): Promise<AgyResultEvent> {
+    let controller: ManagedAgyProcess | undefined;
+    let unsubscribe: (() => void) | undefined;
 
     try {
+      controller = await this.#ensureController(record);
+      if (pending.cancelled || record.closed || this.#closed) {
+        throw new AgyProcessControllerError("CANCELLED");
+      }
+
+      pending.controller = controller;
+      pending.active = true;
+      unsubscribe =
+        onEvent === undefined ? undefined : controller.onEvent(onEvent);
       return await controller.runTurn(input);
     } finally {
       unsubscribe?.();
-      if (controller.isClosed && record.controller === controller) {
-        record.controller = undefined;
+      pending.active = false;
+      if (record.prompt === pending) {
+        record.prompt = undefined;
+      }
+      if (controller?.isClosed === true) {
+        void this.#retireController(
+          record,
+          controller,
+          controller.close(),
+        ).catch(() => undefined);
       }
     }
   }
 
-  public async cancel(sessionId: string): Promise<void> {
+  public cancel(sessionId: string): Promise<void> {
     const record = this.#requireRecord(sessionId);
-    const controller = record.controller;
-    if (controller === undefined) {
-      return;
+    const pending = record.prompt;
+    if (pending === undefined) {
+      return Promise.resolve();
     }
 
-    await controller.cancel();
-    if (controller.isClosed && record.controller === controller) {
-      record.controller = undefined;
+    pending.cancelled = true;
+    const controller = pending.controller;
+    if (!pending.active || controller === undefined) {
+      return Promise.resolve();
     }
+
+    return this.#retireController(record, controller, controller.cancel());
   }
 
   public async closeSession(sessionId: string): Promise<void> {
     const record = this.#requireRecord(sessionId);
     this.#sessions.delete(sessionId);
+    record.closed = true;
+    if (record.prompt !== undefined) {
+      record.prompt.cancelled = true;
+    }
     await this.#closeRecord(record);
   }
 
-  public async closeAll(): Promise<void> {
+  public closeAll(): Promise<void> {
+    if (this.#closePromise !== undefined) {
+      return this.#closePromise;
+    }
+
+    this.#closed = true;
     const records = [...this.#sessions.values()];
     this.#sessions.clear();
-    await Promise.all(records.map((record) => this.#closeRecord(record)));
+    for (const record of records) {
+      record.closed = true;
+      if (record.prompt !== undefined) {
+        record.prompt.cancelled = true;
+      }
+    }
+
+    this.#closePromise = (async () => {
+      await Promise.all(records.map((record) => this.#closeRecord(record)));
+      while (this.#pendingStarts.size > 0) {
+        await Promise.all([...this.#pendingStarts]);
+      }
+    })();
+    return this.#closePromise;
   }
 
   #newRecord(
@@ -163,37 +268,61 @@ export class SessionManager {
       additionalDirectories: [...(options.additionalDirectories ?? [])],
       controller,
       starting: undefined,
+      retiring: undefined,
+      prompt: undefined,
+      closed: false,
     };
   }
 
   #requireRecord(sessionId: string): SessionRecord {
+    this.#assertOpen();
     requireSessionId(sessionId);
     const record = this.#sessions.get(sessionId);
-    if (record === undefined) {
+    if (record === undefined || record.closed) {
       throw new SessionManagerError("UNKNOWN_SESSION");
     }
     return record;
   }
 
   async #ensureController(record: SessionRecord): Promise<ManagedAgyProcess> {
+    if (record.retiring !== undefined) {
+      await record.retiring;
+    }
+    if (record.closed || this.#closed) {
+      throw new SessionManagerError("MANAGER_CLOSED");
+    }
     if (record.controller !== undefined && !record.controller.isClosed) {
       return record.controller;
+    }
+    if (record.controller?.isClosed === true) {
+      await this.#retireController(
+        record,
+        record.controller,
+        record.controller.close(),
+      );
     }
     if (record.starting !== undefined) {
       return record.starting;
     }
 
-    const starting = this.#factory(
-      this.#buildInvocation(record, record.sessionId),
-    );
-    record.starting = starting;
-
-    try {
-      const controller = await starting;
+    const starting = this.#trackStart(async () => {
+      const controller = await this.#factory(
+        this.#buildInvocation(record, record.sessionId),
+      );
+      if (record.closed || this.#closed) {
+        await controller.close();
+        throw new SessionManagerError("MANAGER_CLOSED");
+      }
       if (controller.conversationId !== record.sessionId) {
         await controller.close();
         throw new SessionManagerError("SESSION_ID_MISMATCH");
       }
+      return controller;
+    });
+    record.starting = starting;
+
+    try {
+      const controller = await starting;
       record.controller = controller;
       this.#watchFailure(record, controller);
       return controller;
@@ -208,18 +337,73 @@ export class SessionManager {
   ): void {
     controller.onFailure(() => {
       if (record.controller === controller) {
-        record.controller = undefined;
+        void this.#retireController(
+          record,
+          controller,
+          controller.close(),
+        ).catch(() => undefined);
       }
     });
   }
 
+  #retireController(
+    record: SessionRecord,
+    controller: ManagedAgyProcess,
+    retirement: Promise<void>,
+  ): Promise<void> {
+    if (record.retiring !== undefined) {
+      return record.retiring;
+    }
+
+    const retiring = retirement.finally(() => {
+      if (record.controller === controller) {
+        record.controller = undefined;
+      }
+      if (record.retiring === retiring) {
+        record.retiring = undefined;
+      }
+    });
+    record.retiring = retiring;
+    return retiring;
+  }
+
   async #closeRecord(record: SessionRecord): Promise<void> {
-    const starting = record.starting;
-    const controller =
-      record.controller ?? (starting === undefined ? undefined : await starting);
+    const controllers = new Set<ManagedAgyProcess>();
+    if (record.controller !== undefined) {
+      controllers.add(record.controller);
+    }
+    if (record.starting !== undefined) {
+      try {
+        controllers.add(await record.starting);
+      } catch {
+        // A startup rejected or closed itself after the manager closed.
+      }
+    }
+    if (record.retiring !== undefined) {
+      await record.retiring;
+    }
+
     record.controller = undefined;
     record.starting = undefined;
-    await controller?.close();
+    record.retiring = undefined;
+    await Promise.all([...controllers].map((controller) => controller.close()));
+  }
+
+  #trackStart<T>(operation: () => Promise<T>): Promise<T> {
+    const start = operation();
+    const barrier = start.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.#pendingStarts.add(barrier);
+    void barrier.finally(() => this.#pendingStarts.delete(barrier));
+    return start;
+  }
+
+  #assertOpen(): void {
+    if (this.#closed) {
+      throw new SessionManagerError("MANAGER_CLOSED");
+    }
   }
 
   #buildInvocation(
@@ -267,5 +451,9 @@ function sessionErrorMessage(code: SessionManagerErrorCode): string {
       return "agy session identity mismatch";
     case "INVALID_SESSION":
       return "Invalid agy session identifier";
+    case "MANAGER_CLOSED":
+      return "agy session manager is closed";
+    case "SESSION_BUSY":
+      return "agy session already has a pending prompt";
   }
 }
