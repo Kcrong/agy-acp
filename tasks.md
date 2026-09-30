@@ -6,7 +6,7 @@
 - 작업 branch: `chore/public-release-readiness`
 - merged baseline: PR #2, `main` `343ded8`
 - repository state: PRIVATE. Public visibility 전환과 default-history replacement는 마지막 human-only gate입니다.
-- 다음 작업: current branch를 independent public/security review하고 Critical·High 0이면 concise public-readiness PR을 생성합니다.
+- 다음 작업: review remediation을 focused 재검토하고 Critical·High 0이면 concise public-readiness PR을 생성합니다.
 - 완료 조건: secret·machine data scan clean, hosted multi-OS gate, independent public-readiness review, readiness PR merge, explicit visibility approval, post-public ruleset/security verification. npm publish는 별도 explicit release gate입니다.
 
 ## 조사 메모
@@ -183,7 +183,7 @@
 - [x] failure·cancel·concurrent E2E matrix
 - [x] 실제 agy ACP smoke
 - [x] 공개 배포 문서·metadata·CI
-- [x] clean package install·content scan·hosted CI
+- [x] clean package install·content scan·hosted CI workflow/attempt evidence
 - [x] Remediation exact-head focused review·current merge gate
 
 ## 대기
@@ -203,6 +203,8 @@
 - [ ] Medium: hosted CI를 실제 runner에서 통과시키고 default branch ruleset에 required checks와 approving review 1개를 추가합니다.
 - [x] Future ruleset payload를 4 hosted check contexts, approval 1, stale dismissal, last-push approval, thread resolution으로 dry-run 검증했습니다. CI green과 eligible reviewer 확보 전에는 적용하지 않습니다.
 - [x] Current branch full validation: unit 98/98, mock E2E 8/8, package smoke, real `agy` 1/1, lint, typecheck, build 통과.
+- [x] `57aeb94` independent review: Critical 0, High 0, Medium 1, Low 1 — stale hosted-CI 완료 표기와 non-actionable conduct contact를 발견했습니다.
+- [x] Hosted status를 workflow/attempt evidence로 정정하고 conduct concern을 public-launch private report form으로 연결했습니다.
 - [ ] Low: root/retained machine identity를 accept 또는 remediate 결정합니다.
 - [x] Low Actions policy: repository-level full commit SHA pinning을 enabled로 전환했습니다.
 - [x] Low community metadata: description·5 topics, Code of Conduct, CODEOWNERS, concise PR template, bug/feature forms, security routing을 추가하고 YAML/package exclusion을 검증했습니다.

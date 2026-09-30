@@ -21,6 +21,6 @@ This policy applies to repository discussions, issues, pull requests, reviews, a
 
 ## Reporting and enforcement
 
-Report conduct concerns to the repository owner through an already verified private channel. Do not include secrets or unrelated personal data. Security vulnerabilities must follow [SECURITY.md](SECURITY.md).
+Report conduct concerns through the repository's **Security** tab: open **Advisories**, choose **Report a vulnerability**, and prefix the summary with `Conduct concern`. This private form is enabled as part of the public launch. Do not include credentials, unrelated personal data, or other secrets. Security vulnerabilities must follow [SECURITY.md](SECURITY.md).
 
 Maintainers may edit or remove contributions, restrict participation, or ban accounts when necessary to protect the community. Reports will be reviewed as privately and promptly as practical.
