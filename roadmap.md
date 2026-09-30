@@ -6,7 +6,10 @@
 
 ## 기본 결정
 
-- 런타임은 Node.js 24, 언어는 TypeScript strict ESM을 사용합니다.
+- 개발·검증 기준 런타임은 Node.js 24, 언어는 TypeScript strict ESM을 사용합니다.
+- 배포물은 compile된 JavaScript와 `agy-acp` executable을 제공하며 사용자가 TypeScript runtime을 설치하지 않아도 됩니다.
+- 향후 public repository와 npm package로 배포합니다. 최소 Node version은 SDK 호환성과 local matrix 검증을 통과한 maintained LTS로 정하고 Node.js 24 전용 API에 불필요하게 종속되지 않습니다.
+- Linux·macOS·Windows에서 사용자 홈이나 절대 경로를 가정하지 않고, `agy` 실행 파일 탐색 실패를 명확히 진단합니다.
 - 최신 안정 ACP v1과 공식 `@agentclientprotocol/sdk`의 fluent `agent()` API를 기준으로 합니다. ACP v2 Draft는 범위에서 제외합니다.
 - `agy --input-format stream-json --output-format stream-json` NDJSON 인터페이스를 사용하며 터미널 화면을 파싱하지 않습니다.
 - 기존 `agy` 로그인 상태를 그대로 사용하되 자격 증명·토큰 파일을 직접 읽거나 출력하지 않습니다.
@@ -18,7 +21,7 @@
 ## 1. 프로토콜 계약 확정
 
 - [x] 설치된 `agy`의 stream-json 입력·출력 event를 정상·오류·취소 흐름별 fixture로 확보합니다.
-- [ ] ACP v1 필수 method와 선택 capability를 분류합니다.
+- [x] ACP v1 필수 method와 선택 capability를 분류합니다.
 - [ ] ACP request/update와 `agy` event 간 변환 표를 작성합니다.
 - [ ] 세션, 동시성, 취소, timeout, process 종료 정책을 결정합니다.
 - [ ] 지원하지 않는 ACP capability는 광고하지 않고 명시적인 protocol error를 반환하도록 정의합니다.
@@ -58,12 +61,16 @@
 - [ ] open handle과 child process 누수가 없음을 검증합니다.
 - [ ] local typecheck, lint, unit, mock E2E, build를 모두 통과시킵니다.
 
-## 6. 배포·사용 문서와 CI
+## 6. 공개 배포·사용 문서와 CI
 
-- [ ] 설치, 실행, ACP client 설정, 환경 요구사항, 문제 해결을 README에 작성합니다.
-- [ ] package metadata, license, ignore, release 전 검증 구성을 정리합니다.
+- [ ] 설치, 실행, ACP client 설정, 환경 요구사항, 문제 해결, 호환성 표를 README에 작성합니다.
+- [ ] package metadata, license, ignore, semantic version 정책, release 전 검증 구성을 정리합니다.
+- [ ] `CONTRIBUTING.md`, `SECURITY.md`와 공개 issue/PR 기여 기준을 작성합니다.
+- [ ] npm package가 source map·credential·개인 경로·local fixture를 포함하지 않는지 `npm pack --dry-run`으로 검증합니다.
+- [ ] session scratch의 clean directory에 package를 설치해 `agy-acp` executable smoke를 수행합니다.
 - [ ] Linux·macOS·Windows를 대상으로 GitHub Actions workflow를 작성합니다.
 - [ ] Actions 사용량 소진으로 실행 전 실패하면 원인과 local 검증 결과를 PR에 기록합니다.
+- [ ] 공개 전 repository history와 package contents에 secret·token·machine-specific path가 없음을 검사합니다.
 
 ## 7. 완료 게이트
 
