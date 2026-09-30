@@ -5,9 +5,7 @@ import {
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk";
 import { execFile, spawn } from "node:child_process";
-import { constants } from "node:fs";
 import {
-  access,
   mkdir,
   mkdtemp,
   readFile,
@@ -87,17 +85,14 @@ async function verifyPackagedCli(consumerDirectory, packageRoot) {
     throw new Error("Unexpected package bin mapping");
   }
 
-  const cliEntry = join(packageRoot, "dist", "cli.js");
-  const bin =
-    process.platform === "win32"
-      ? { command: process.execPath, args: [cliEntry] }
-      : {
-          command: join(consumerDirectory, "node_modules", ".bin", "agy-acp"),
-          args: [],
-        };
-  if (process.platform !== "win32") {
-    await access(bin.command, constants.X_OK);
+  const npmExecPath = process.env.npm_execpath;
+  if (npmExecPath === undefined) {
+    throw new Error("npm_execpath is required");
   }
+  const bin = {
+    command: process.execPath,
+    args: [npmExecPath, "exec", "--offline", "--", "agy-acp"],
+  };
 
   const fakeAgy = join(REPOSITORY_ROOT, "tests", "fixtures", "fake-agy.mjs");
   const child = spawn(
