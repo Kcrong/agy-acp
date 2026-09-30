@@ -1,7 +1,11 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Writable } from "node:stream";
 
-import { parseAgyEvent, type AgyEvent } from "./agy-events.js";
+import {
+  parseAgyEvent,
+  type AgyEvent,
+  type AgyResultEvent,
+} from "./agy-events.js";
 import {
   spawnAgyProcess,
   type AgyInvocationOptions,
@@ -17,7 +21,16 @@ export type AgyProcessControllerErrorCode =
   | "INVALID_OUTPUT"
   | "WRITE_FAILED"
   | "PROCESS_CLOSED"
+  | "PROCESS_BUSY"
+  | "PROMPT_TIMEOUT"
+  | "CANCELLED"
   | "EVENT_HANDLER_FAILED";
+
+interface ActiveTurn {
+  readonly resolve: (result: AgyResultEvent) => void;
+  readonly reject: (error: AgyProcessControllerError) => void;
+  readonly timer: NodeJS.Timeout;
+}
 
 export interface AgyProcessControllerOptions {
   readonly invocation: AgyInvocationOptions;
@@ -51,6 +64,11 @@ export class AgyProcessController {
   readonly #resolveReady: () => void;
   readonly #rejectReady: (error: AgyProcessControllerError) => void;
   #initTimer: NodeJS.Timeout | undefined;
+  #activeTurn: ActiveTurn | undefined;
+  #shutdownPromise: Promise<void> | undefined;
+  #resolveShutdown: (() => void) | undefined;
+  #terminationTimer: NodeJS.Timeout | undefined;
+  #hardKillTimer: NodeJS.Timeout | undefined;
   #conversationId: string | undefined;
   #stderr = Buffer.alloc(0);
   #stderrTruncated = false;
@@ -161,6 +179,53 @@ export class AgyProcessController {
     }
   }
 
+  public runTurn(value: unknown): Promise<AgyResultEvent> {
+    if (this.#activeTurn !== undefined) {
+      return Promise.reject(new AgyProcessControllerError("PROCESS_BUSY"));
+    }
+    if (this.#closed || this.#failed || this.#conversationId === undefined) {
+      return Promise.reject(new AgyProcessControllerError("PROCESS_CLOSED"));
+    }
+
+    const turn = new Promise<AgyResultEvent>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const error = new AgyProcessControllerError("PROMPT_TIMEOUT");
+        this.#rejectActiveTurn(error);
+        void this.#beginShutdown(true);
+      }, this.#limits.promptTimeoutMs);
+      timer.unref();
+      this.#activeTurn = { resolve, reject, timer };
+    });
+
+    void this.send(value).catch((error: unknown) => {
+      const wrapped =
+        error instanceof AgyProcessControllerError
+          ? error
+          : new AgyProcessControllerError("WRITE_FAILED", error);
+      this.#rejectActiveTurn(wrapped);
+    });
+
+    return turn;
+  }
+
+  public cancel(): Promise<void> {
+    if (this.#activeTurn === undefined) {
+      return Promise.resolve();
+    }
+
+    this.#rejectActiveTurn(new AgyProcessControllerError("CANCELLED"));
+    return this.#beginShutdown(true);
+  }
+
+  public close(): Promise<void> {
+    if (this.#shutdownPromise !== undefined) {
+      return this.#shutdownPromise;
+    }
+
+    this.#rejectActiveTurn(new AgyProcessControllerError("PROCESS_CLOSED"));
+    return this.#beginShutdown(false);
+  }
+
   readonly #handleStdout = (chunk: string | Uint8Array): void => {
     if (this.#failed || this.#closed) {
       return;
@@ -215,9 +280,15 @@ export class AgyProcessController {
 
   readonly #handleExit = (): void => {
     this.#closed = true;
+    if (this.#shutdownPromise !== undefined) {
+      this.#finalizeShutdown();
+      return;
+    }
+
     if (!this.#failed) {
       this.#fail(new AgyProcessControllerError("PROCESS_EXITED"), false);
     }
+    this.#cleanupListeners();
   };
 
   #acceptEvent(event: AgyEvent): void {
@@ -245,6 +316,13 @@ export class AgyProcessController {
       return;
     }
 
+    if (event.kind === "result" && this.#activeTurn !== undefined) {
+      const active = this.#activeTurn;
+      this.#activeTurn = undefined;
+      clearTimeout(active.timer);
+      active.resolve(event);
+    }
+
     for (const listener of this.#eventListeners) {
       try {
         listener(event);
@@ -264,8 +342,9 @@ export class AgyProcessController {
 
     this.#failed = true;
     this.#clearInitTimer();
+    this.#rejectActiveTurn(error);
     if (terminate && !this.#closed) {
-      this.#child.kill("SIGTERM");
+      void this.#beginShutdown(true);
     }
 
     if (!this.#readySettled) {
@@ -277,6 +356,96 @@ export class AgyProcessController {
     for (const listener of this.#failureListeners) {
       listener(error);
     }
+  }
+
+  #rejectActiveTurn(error: AgyProcessControllerError): void {
+    const active = this.#activeTurn;
+    if (active === undefined) {
+      return;
+    }
+
+    this.#activeTurn = undefined;
+    clearTimeout(active.timer);
+    active.reject(error);
+  }
+
+  #beginShutdown(immediateTermination: boolean): Promise<void> {
+    if (this.#shutdownPromise !== undefined) {
+      return this.#shutdownPromise;
+    }
+
+    this.#closed = true;
+    this.#clearInitTimer();
+    try {
+      this.#child.stdin.end();
+    } catch {
+      // The process may already have closed its input stream.
+    }
+
+    this.#shutdownPromise = new Promise<void>((resolve) => {
+      this.#resolveShutdown = resolve;
+    });
+
+    if (immediateTermination) {
+      this.#sendSignal("SIGTERM");
+      this.#terminationTimer = setTimeout(() => {
+        this.#sendSignal("SIGKILL");
+        this.#hardKillTimer = setTimeout(() => {
+          this.#finalizeShutdown();
+        }, this.#limits.hardKillGraceMs);
+        this.#hardKillTimer.unref();
+      }, this.#limits.cancelGraceMs);
+      this.#terminationTimer.unref();
+    } else {
+      this.#terminationTimer = setTimeout(() => {
+        this.#sendSignal("SIGTERM");
+        this.#hardKillTimer = setTimeout(() => {
+          this.#sendSignal("SIGKILL");
+          this.#finalizeShutdown();
+        }, this.#limits.hardKillGraceMs);
+        this.#hardKillTimer.unref();
+      }, this.#limits.cancelGraceMs);
+      this.#terminationTimer.unref();
+    }
+
+    return this.#shutdownPromise;
+  }
+
+  #sendSignal(signal: NodeJS.Signals): void {
+    try {
+      this.#child.kill(signal);
+    } catch {
+      // A concurrent exit is equivalent to successful termination.
+    }
+  }
+
+  #finalizeShutdown(): void {
+    this.#clearShutdownTimers();
+    this.#cleanupListeners();
+    const resolve = this.#resolveShutdown;
+    this.#resolveShutdown = undefined;
+    resolve?.();
+  }
+
+  #clearShutdownTimers(): void {
+    if (this.#terminationTimer !== undefined) {
+      clearTimeout(this.#terminationTimer);
+      this.#terminationTimer = undefined;
+    }
+    if (this.#hardKillTimer !== undefined) {
+      clearTimeout(this.#hardKillTimer);
+      this.#hardKillTimer = undefined;
+    }
+  }
+
+  #cleanupListeners(): void {
+    this.#child.stdout.off("data", this.#handleStdout);
+    this.#child.stdout.off("end", this.#handleStdoutEnd);
+    this.#child.stderr.off("data", this.#handleStderr);
+    this.#child.off("error", this.#handleProcessError);
+    this.#child.off("exit", this.#handleExit);
+    this.#eventListeners.clear();
+    this.#failureListeners.clear();
   }
 
   #clearInitTimer(): void {
@@ -327,6 +496,12 @@ function errorMessage(code: AgyProcessControllerErrorCode): string {
       return "Failed to write to agy process";
     case "PROCESS_CLOSED":
       return "agy process is closed";
+    case "PROCESS_BUSY":
+      return "agy process is already running a turn";
+    case "PROMPT_TIMEOUT":
+      return "agy prompt timed out";
+    case "CANCELLED":
+      return "agy prompt was cancelled";
     case "EVENT_HANDLER_FAILED":
       return "agy event handler failed";
   }

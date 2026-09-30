@@ -73,6 +73,21 @@ function initLine(id = "opaque-id"): string {
   })}\n`;
 }
 
+function resultLine(status: "SUCCESS" | "ERROR" = "SUCCESS"): string {
+  return `${JSON.stringify({
+    event: "result",
+    result: {
+      conversation_id: "opaque-id",
+      duration_seconds: 1,
+      error: status === "ERROR" ? "failed" : null,
+      num_turns: 1,
+      response: "result",
+      status,
+      usage: {},
+    },
+  })}\n`;
+}
+
 async function startReady(fake: FakeProcess, overrides?: Partial<RuntimeLimits>) {
   const started = AgyProcessController.start(
     {
@@ -234,5 +249,96 @@ describe("AgyProcessController", () => {
     stdin.release();
     await sending;
     expect(settled).toBe(true);
+  });
+});
+
+describe("AgyProcessController turn lifecycle", () => {
+  it("resolves a turn with the terminal result", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+
+    const turn = controller.runTurn({ event: "user" });
+    fake.stdout.write(resultLine());
+
+    await expect(turn).resolves.toMatchObject({
+      kind: "result",
+      status: "SUCCESS",
+      response: "result",
+    });
+  });
+
+  it("rejects overlapping turns for one process", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+
+    const first = controller.runTurn({ event: "user" });
+    await expect(controller.runTurn({ event: "user" })).rejects.toMatchObject({
+      code: "PROCESS_BUSY",
+    });
+
+    fake.stdout.write(resultLine());
+    await first;
+  });
+
+  it("times out a prompt and escalates from SIGTERM to SIGKILL", async () => {
+    vi.useFakeTimers();
+    const fake = createFakeProcess();
+    const controller = await startReady(fake, {
+      promptTimeoutMs: 10,
+      cancelGraceMs: 20,
+      hardKillGraceMs: 30,
+    });
+
+    const turn = controller.runTurn({ event: "user" });
+    const assertion = expect(turn).rejects.toMatchObject({
+      code: "PROMPT_TIMEOUT",
+    });
+
+    await vi.advanceTimersByTimeAsync(10);
+    await assertion;
+    expect(fake.signals).toEqual(["SIGTERM"]);
+
+    await vi.advanceTimersByTimeAsync(20);
+    expect(fake.signals).toEqual(["SIGTERM", "SIGKILL"]);
+
+    await vi.advanceTimersByTimeAsync(30);
+    expect(fake.child.listenerCount("exit")).toBe(0);
+  });
+
+  it("cancels an active turn and settles after process exit", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+    const turn = controller.runTurn({ event: "user" });
+    const turnAssertion = expect(turn).rejects.toMatchObject({
+      code: "CANCELLED",
+    });
+
+    const cancelling = controller.cancel();
+    expect(fake.signals).toEqual(["SIGTERM"]);
+    await turnAssertion;
+
+    fake.emitExit(null, "SIGTERM");
+    await cancelling;
+  });
+
+  it("closes idempotently and removes process and stream listeners", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+
+    const first = controller.close();
+    const second = controller.close();
+
+    expect(second).toBe(first);
+    expect(fake.stdin.writableEnded).toBe(true);
+    expect(fake.signals).toEqual([]);
+
+    fake.emitExit(0);
+    await first;
+
+    expect(fake.child.listenerCount("error")).toBe(0);
+    expect(fake.child.listenerCount("exit")).toBe(0);
+    expect(fake.stdout.listenerCount("data")).toBe(0);
+    expect(fake.stdout.listenerCount("end")).toBe(0);
+    expect(fake.stderr.listenerCount("data")).toBe(0);
   });
 });

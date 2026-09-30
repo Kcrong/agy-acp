@@ -39,9 +39,9 @@
 - [x] shell 없이 인자 배열로 `agy`를 실행합니다.
 - [x] 분할 chunk를 견디는 bounded NDJSON parser를 구현합니다.
 - [ ] session별 process lifecycle과 표준입출력 backpressure를 관리합니다.
-- [ ] 비정상 종료, malformed JSON, stderr, timeout을 typed error로 변환합니다.
+- [x] 비정상 종료, malformed JSON, stderr, timeout을 typed error로 변환합니다.
 - [ ] ACP 취소를 현재 turn 중단 후 제한 시간 내 process 종료로 연결합니다.
-- [ ] 종료 시 child process와 listener를 누수 없이 정리합니다.
+- [x] 종료 시 child process와 listener를 누수 없이 정리합니다.
 
 ## 4. ACP agent 구현
 
