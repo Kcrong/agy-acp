@@ -4,6 +4,7 @@
 
 - 현재 단계: 프로토콜 계약 확정
 - 작업 branch: `feat/agy-acp-bridge`
+- draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 다음 작업: 실제 `agy` stream-json 정상 응답을 안전한 최소 prompt로 수집하고 ACP v1 method 목록과 비교합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
@@ -19,6 +20,8 @@
 - [x] 공식 TypeScript SDK가 `@agentclientprotocol/sdk`이며 신규 구현은 fluent `agent()` API를 사용해야 함을 확인했습니다.
 - [x] ACP local agent가 JSON-RPC over stdio를 사용하고 한 연결에서 여러 session 및 bidirectional request를 지원함을 확인했습니다.
 - [x] 구현 범위와 완료 게이트를 `roadmap.md`에 작성했습니다.
+- [x] roadmap과 tasks를 `docs: define agy acp implementation roadmap`으로 commit하고 push했습니다.
+- [x] draft PR #2를 Conventional Commit 형식의 영문 제목과 한국어 4섹션 본문으로 생성했습니다.
 
 ## 진행 중
 
