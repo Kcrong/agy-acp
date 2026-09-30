@@ -11,3 +11,14 @@ export type {
   AgyStepUpdateEvent,
   AgyUnknownEvent,
 } from "./agy-events.js";
+export {
+  AgyProcessConfigError,
+  buildAgyInvocation,
+  spawnAgyProcess,
+} from "./agy-process.js";
+export type {
+  AgyInvocation,
+  AgyInvocationOptions,
+  AgySpawnFunction,
+  AgySpawnOptions,
+} from "./agy-process.js";
