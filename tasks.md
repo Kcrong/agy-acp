@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: fake `agy` mode를 확장해 split streaming, malformed JSON, 조기 종료, prompt timeout, cancellation, 동시 session E2E를 추가하고 child leak을 검증합니다.
+- 다음 작업: 설치된 실제 `agy 1.2.14`를 `agy-acp` stdio CLI 뒤에서 실행해 최소 ACP initialize→new→prompt→close smoke를 수행하되 응답·ID·usage·자격 증명은 출력하지 않습니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -60,6 +60,10 @@
 - [x] Credential-free fake `agy` executable과 실제 ACP client→CLI→child→streaming→close E2E harness를 구현했습니다.
 - [x] SDK connection close만으로 Node pipe EOF가 발생하지 않는 hang을 단계별 3초 timeout으로 특정하고 client stdin EOF를 명시해 수정했습니다.
 - [x] `npm run check`: unit 48/48, normal stdio E2E 1/1, lint, typecheck, build 통과.
+- [x] Runtime limits를 양의 정수 환경변수로 override하고 잘못된 값을 echo하지 않는 parser를 unit test와 함께 구현했습니다.
+- [x] fake `agy`의 split·malformed·early-exit·hang/SIGTERM modes와 단계별 3초 fail-fast E2E cleanup을 구현했습니다.
+- [x] Split streaming, malformed JSON, 조기 exit, prompt timeout, cancellation, 두 session 동시 실행 E2E 6/6을 통과했습니다.
+- [x] `npm run check`: unit 50/50, 전체 E2E 7/7, lint, typecheck, build 통과. 각 test가 CLI/fake child exit를 확인했습니다.
 
 ## 진행 중
 
@@ -75,7 +79,8 @@
 - [x] SessionManager isolation·lifecycle
 - [x] ACP AgentApp baseline handlers
 - [x] stdio CLI와 fake-agy normal E2E
-- [ ] failure·cancel·concurrent E2E matrix
+- [x] failure·cancel·concurrent E2E matrix
+- [ ] 실제 agy ACP smoke
 
 ## 대기
 

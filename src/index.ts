@@ -1,5 +1,9 @@
-export { DEFAULT_LIMITS } from "./config.js";
-export type { RuntimeLimits } from "./config.js";
+export {
+  DEFAULT_LIMITS,
+  RuntimeConfigError,
+  runtimeLimitsFromEnv,
+} from "./config.js";
+export type { RuntimeLimitField, RuntimeLimits } from "./config.js";
 export { NdjsonParseError, NdjsonParser } from "./ndjson.js";
 export type { NdjsonErrorCode, NdjsonParserOptions } from "./ndjson.js";
 export { AgyEventValidationError, parseAgyEvent } from "./agy-events.js";

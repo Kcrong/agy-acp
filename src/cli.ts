@@ -5,7 +5,10 @@ import { parseArgs } from "node:util";
 import { Readable, Writable } from "node:stream";
 
 import { createAgyAgent } from "./acp-agent.js";
-import { DEFAULT_LIMITS, type RuntimeLimits } from "./config.js";
+import {
+  runtimeLimitsFromEnv,
+  type RuntimeLimits,
+} from "./config.js";
 import { SessionManager } from "./session-manager.js";
 
 export interface AgyAcpServerOptions {
@@ -20,7 +23,7 @@ export interface AgyAcpServerOptions {
 export async function runAgyAcpServer(
   options: AgyAcpServerOptions,
 ): Promise<void> {
-  const limits = options.limits ?? DEFAULT_LIMITS;
+  const limits = options.limits ?? runtimeLimitsFromEnv(options.env);
   const manager = new SessionManager({
     limits,
     executable: options.agyPath ?? options.env.AGY_ACP_AGY_PATH ?? "agy",

@@ -49,16 +49,16 @@
 - [x] session 생성과 고유 ID·working directory 관리를 구현합니다.
 - [x] prompt를 `agy` input으로 변환하고 응답을 ACP streaming update로 전달합니다.
 - [x] 세션 취소와 client disconnect 정리를 구현합니다.
-- [ ] 여러 ACP session이 한 연결에서 독립적으로 동작하도록 구현합니다.
+- [x] 여러 ACP session이 한 연결에서 독립적으로 동작하도록 구현합니다.
 - [x] ACP JSON-RPC error code와 사용자용 오류 메시지를 안정적으로 반환합니다.
 
 ## 5. 신뢰성 테스트
 
 - [x] parser, event mapping, session manager, error mapping, cancellation unit test를 작성합니다.
 - [x] fake `agy`를 이용한 ACP client-to-process mock E2E harness를 작성합니다.
-- [ ] 정상 streaming, 분할 JSON, malformed JSON, 조기 종료, timeout, 취소, 동시 session을 E2E로 검증합니다.
+- [x] 정상 streaming, 분할 JSON, malformed JSON, 조기 종료, timeout, 취소, 동시 session을 E2E로 검증합니다.
 - [ ] 설치된 실제 `agy`로 자격 증명을 노출하지 않는 최소 smoke E2E를 통과시킵니다.
-- [ ] open handle과 child process 누수가 없음을 검증합니다.
+- [x] open handle과 child process 누수가 없음을 검증합니다.
 - [ ] local typecheck, lint, unit, mock E2E, build를 모두 통과시킵니다.
 
 ## 6. 공개 배포·사용 문서와 CI
