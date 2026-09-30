@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: 최종 검토 및 공개 전 hygiene
+- 현재 단계: 독립 리뷰 지적 수정
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: PR 본문에 실제 local/hosted 검증을 반영하고 독립 코드리뷰를 수행합니다. 최초 commit `21334d1`의 machine-specific author/committer metadata는 공개 전 history rewrite 승인 항목으로 유지합니다.
+- 다음 작업: cancel-before-active, retiring process overlap, disconnect-during-start, concurrent load를 재현하는 RED tests를 추가하고 SessionManager를 closed/starting/retiring/pending-prompt state machine으로 수정합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -77,6 +77,15 @@
 - [x] Tracked files, patch history, installed package의 credential·machine-path content scan은 clean입니다.
 - [x] Hosted CI run 36696258541의 Linux/macOS/Windows 4개 job 모두 `runner_id=0`, steps `[]`로 runner allocation 전에 실패해 Actions 사용량 소진임을 확인했습니다.
 - [ ] Root commit `21334d1`의 author/committer metadata에 machine-specific identity가 있습니다. Public 전 history rewrite에는 명시적 승인이 필요합니다.
+
+## 독립 리뷰 1차 결과
+
+- Runtime/protocol: Critical 0, High 4, Medium 8, Low 4 — FAIL.
+- Public release: Critical 0, High 2, Medium 5, Low 3 — NOT READY.
+- High remediation: prompt activation 전 cancel 유실, 이전 process 종료 전 lazy restart, disconnect 중 startup 누수/closeAll barrier 부재, downstream notification backpressure 부재.
+- Medium remediation: stdout EOF/child close ordering, write failure retire, session admission limit, process-tree termination, executable absolute resolution, concurrent load reservation, SDK request AbortSignal, event phase ordering, invalid path error mapping, backend text 기반 cancel 오분류.
+- Public 후속: packed clean smoke는 이미 local 통과했습니다. Windows process E2E와 hosted matrix는 Actions quota 복구 후 필요하며 `private:true` 제거와 root history rewrite는 실제 공개 release gate로 유지합니다.
+- Low corrections: packaged README의 SECURITY link, CI npm version 계약, unknown-event diagnostic 문서 정확성.
 
 ## 진행 중
 
