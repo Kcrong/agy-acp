@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: 3차 리뷰 지적 수정 완료·final exact-head 재리뷰 준비
+- 현재 단계: focused public-review Medium 2개 수정 완료·successor 재리뷰 준비
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: review remediation을 commit/push하고 successor exact head에서 focused runtime/public 재리뷰로 Critical/High 0과 Medium closure를 확인합니다.
+- 다음 작업: rejection-path cancellation과 Windows package environment 수정 commit을 push하고 successor exact head에서 두 finding closure를 확인합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -142,7 +142,13 @@
 - [x] SECURITY의 ACP-required session ID와 diagnostics privacy를 구분하고 README에 upstream `agy` data-use/opt-out notice를 연결했습니다.
 - [x] Package smoke가 모든 OS에서 `npm exec --offline -- agy-acp`로 installed bin을 호출하며 CI Windows job에서도 clean package smoke를 실행하도록 확장했습니다.
 - [x] Post-review targeted 63/63, 전체 unit 92/92, mock E2E 8/8, lint, typecheck, build, packed clean-install/import/bin smoke, 실제 authenticated agy smoke 1/1 통과.
-- [ ] Successor exact head focused runtime/public independent re-review.
+- [x] `74ccd49` focused runtime re-review: Critical 0, High 0, Medium 0, Low 0 — merge PASS.
+- `74ccd49` focused public re-review: current merge Critical 0, High 0, Medium 2, Low 0 — HOLD. Rejected retirement/startup await cancellation precedence와 Windows npm shim environment를 지적했습니다.
+- [x] 모든 retirement/startup await rejection이 aborted signal을 먼저 확인해 underlying error 대신 `CANCELLED`를 반환하도록 `awaitWithCancellation` barrier를 추가했습니다.
+- [x] Retirement reject 및 lazy startup reject after close regressions를 추가해 cancellation precedence와 session reservation cleanup을 검증했습니다.
+- [x] Package smoke가 expected local `agy-acp`/`agy-acp.cmd` shim 존재를 먼저 검증하고 `PATHEXT`, `ComSpec`, `SystemRoot`, temp/user variables를 포함한 platform environment를 보존합니다.
+- [x] Second remediation 전체 unit 94/94, mock E2E 8/8, lint, typecheck, build, packed clean-install/import/local-bin smoke, 실제 authenticated agy smoke 1/1 통과.
+- [ ] Second successor exact head focused independent re-review.
 
 
 ## 진행 중

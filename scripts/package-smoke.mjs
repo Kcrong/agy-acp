@@ -5,7 +5,9 @@ import {
   PROTOCOL_VERSION,
 } from "@agentclientprotocol/sdk";
 import { execFile, spawn } from "node:child_process";
+import { constants } from "node:fs";
 import {
+  access,
   mkdir,
   mkdtemp,
   readFile,
@@ -85,6 +87,17 @@ async function verifyPackagedCli(consumerDirectory, packageRoot) {
     throw new Error("Unexpected package bin mapping");
   }
 
+  const localShim = join(
+    consumerDirectory,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "agy-acp.cmd" : "agy-acp",
+  );
+  await access(
+    localShim,
+    process.platform === "win32" ? constants.F_OK : constants.X_OK,
+  );
+
   const npmExecPath = process.env.npm_execpath;
   if (npmExecPath === undefined) {
     throw new Error("npm_execpath is required");
@@ -107,9 +120,8 @@ async function verifyPackagedCli(consumerDirectory, packageRoot) {
     {
       cwd: consumerDirectory,
       env: {
-        HOME: process.env.HOME,
-        LANG: "C.UTF-8",
-        PATH: process.env.PATH,
+        ...process.env,
+        LANG: process.env.LANG ?? "C.UTF-8",
       },
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
