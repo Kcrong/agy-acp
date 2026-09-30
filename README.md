@@ -159,6 +159,8 @@ npm run check
 
 `npm run check` runs lint, strict type checking, unit tests, credential-free fake-process E2E tests, and the build.
 
+`npm run test:package` builds a real tarball, installs it into a new temporary consumer project, verifies package imports and the installed CLI, then removes its scratch directory.
+
 The real authenticated smoke test is opt-in:
 
 ```bash

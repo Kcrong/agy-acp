@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: actual tarball pack→scratch clean install→packaged bin/import smoke를 재사용 가능한 Node script로 추가하고 CI에 연결한 뒤 독립 재리뷰합니다.
+- 다음 작업: 최신 head 전체 diff에 runtime/protocol과 public-release 독립 재리뷰를 병렬 수행하고 남은 findings를 수정합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -112,7 +112,10 @@
 - [x] Public/Low: package에 SECURITY.md를 포함하고 npm `>=10.9.0 <12` 지원 범위를 문서화했습니다.
 - [x] Public/Low: unknown events는 raw payload 없이 조용히 무시하는 실제 동작으로 문서를 정정했습니다.
 - [x] Public corrections 후 unit 77/77, mock E2E 8/8, package SECURITY inclusion, Windows E2E YAML 검증 통과.
-- [ ] Publication remediation: CI pack→clean install→packaged bin smoke와 독립 재리뷰.
+- [x] Publication remediation: `scripts/package-smoke.mjs`가 actual tarball pack→scratch clean install→package import→packaged CLI/fake child ACP smoke→cleanup을 수행합니다.
+- [x] CI Ubuntu Node 24 package step을 dry-run에서 actual `npm run test:package`로 강화했습니다.
+- [x] Package remediation 후 unit 77/77, mock E2E 8/8, packaged import/bin smoke 통과.
+- [ ] Exact-head 독립 재리뷰와 남은 history/public release 결정을 수행합니다.
 
 
 ## 진행 중
