@@ -38,7 +38,7 @@
 
 - [x] shell 없이 인자 배열로 `agy`를 실행합니다.
 - [x] 분할 chunk를 견디는 bounded NDJSON parser를 구현합니다.
-- [ ] session별 process lifecycle과 표준입출력 backpressure를 관리합니다.
+- [x] session별 process lifecycle과 표준입출력 backpressure를 관리합니다.
 - [x] 비정상 종료, malformed JSON, stderr, timeout을 typed error로 변환합니다.
 - [ ] ACP 취소를 현재 turn 중단 후 제한 시간 내 process 종료로 연결합니다.
 - [x] 종료 시 child process와 listener를 누수 없이 정리합니다.
@@ -54,7 +54,7 @@
 
 ## 5. 신뢰성 테스트
 
-- [ ] parser, event mapping, session manager, error mapping, cancellation unit test를 작성합니다.
+- [x] parser, event mapping, session manager, error mapping, cancellation unit test를 작성합니다.
 - [ ] fake `agy`를 이용한 ACP client-to-process mock E2E harness를 작성합니다.
 - [ ] 정상 streaming, 분할 JSON, malformed JSON, 조기 종료, timeout, 취소, 동시 session을 E2E로 검증합니다.
 - [ ] 설치된 실제 `agy`로 자격 증명을 노출하지 않는 최소 smoke E2E를 통과시킵니다.

@@ -30,4 +30,13 @@ export type {
   AgyProcessControllerErrorCode,
   AgyProcessControllerOptions,
   AgyProcessDiagnostics,
+  ManagedAgyProcess,
 } from "./process-controller.js";
+export { SessionManager, SessionManagerError } from "./session-manager.js";
+export type {
+  AgyControllerFactory,
+  CreateSessionOptions,
+  LoadSessionOptions,
+  SessionManagerErrorCode,
+  SessionManagerOptions,
+} from "./session-manager.js";

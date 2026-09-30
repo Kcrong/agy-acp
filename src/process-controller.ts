@@ -42,6 +42,16 @@ export interface AgyProcessDiagnostics {
   readonly stderrTruncated: boolean;
 }
 
+export interface ManagedAgyProcess {
+  readonly conversationId: string;
+  readonly isClosed: boolean;
+  runTurn(value: unknown): Promise<AgyResultEvent>;
+  cancel(): Promise<void>;
+  close(): Promise<void>;
+  onEvent(listener: (event: AgyEvent) => void): () => void;
+  onFailure(listener: (error: AgyProcessControllerError) => void): () => void;
+}
+
 export class AgyProcessControllerError extends Error {
   public readonly code: AgyProcessControllerErrorCode;
 
@@ -52,7 +62,7 @@ export class AgyProcessControllerError extends Error {
   }
 }
 
-export class AgyProcessController {
+export class AgyProcessController implements ManagedAgyProcess {
   readonly #child: ChildProcessWithoutNullStreams;
   readonly #limits: RuntimeLimits;
   readonly #parser: NdjsonParser<unknown>;
@@ -130,6 +140,10 @@ export class AgyProcessController {
       throw new AgyProcessControllerError("PROCESS_CLOSED");
     }
     return this.#conversationId;
+  }
+
+  public get isClosed(): boolean {
+    return this.#closed;
   }
 
   public get diagnostics(): AgyProcessDiagnostics {
