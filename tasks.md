@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: public-release readiness loop round 1 — private baseline audit
+- 현재 단계: public-release readiness loop round 2 — metadata and policy hardening
 - 작업 branch: `chore/public-release-readiness`
 - merged baseline: PR #2, `main` `343ded8`
 - repository state: PRIVATE. Public visibility 전환과 default-history replacement는 마지막 human-only gate입니다.
-- 다음 작업: full history/package/Actions evidence secret scan, community/security metadata와 ruleset recovery plan을 검증하고 필요한 변경을 concise PR로 제출합니다.
+- 다음 작업: community metadata/templates와 Actions SHA policy를 harden하고, hosted checks/approval을 public 전환 후 복구할 exact ruleset plan을 검증해 concise PR로 제출합니다.
 - 완료 조건: secret·machine data scan clean, hosted multi-OS gate, independent public-readiness review, readiness PR merge, explicit visibility approval, post-public ruleset/security verification. npm publish는 별도 explicit release gate입니다.
 
 ## 조사 메모
@@ -198,7 +198,11 @@
 - [x] Vulnerability alerts와 automated security fixes는 enabled입니다. Private vulnerability reporting은 public repository 대상이라 현재 endpoint가 404입니다.
 - [x] GitHub 공식 문서상 public 전환은 code와 Actions history/log를 공개하고 push rulesets를 disabled하므로, secret/log audit와 post-switch ruleset 복구가 필수입니다.
 - [x] Package `@kcrong/agy-acp@0.1.0`은 Apache-2.0·public publish config이지만 `private:true` guard를 유지합니다.
-- [ ] Full history/package/Actions evidence를 redacted/count-only 방식으로 independent secret audit합니다.
+- [x] Independent public-exposure audit: 65 retained source revisions, 63 trees, 210 text blobs, 3 PRs, 23 Actions runs/92 jobs, simulated 24-file package를 count-only/redacted scan했습니다.
+- [x] Secret exposure Critical 0, High 0. Executed Actions steps·logs·artifacts는 모두 0이며 모든 jobs가 runner 미할당 상태입니다.
+- [ ] Medium: hosted CI를 실제 runner에서 통과시키고 default ruleset에 required checks와 approving review 1개를 추가합니다.
+- [ ] Low: root/retained machine identity 결정, Actions SHA policy hardening, community metadata/templates를 정리합니다.
+- [x] Low package gate: `prepack`에 full check + package smoke를 포함하고 outer npm dry-run inheritance regression을 수정했습니다.
 - [ ] Public-readiness metadata/docs/settings 변경을 구현·검증하고 concise PR로 제출합니다.
 - [ ] Hosted matrix, default-history replacement, visibility flip, npm publish의 외부/human gates를 순서대로 처리합니다.
 
