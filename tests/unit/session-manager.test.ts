@@ -1,0 +1,638 @@
+import { describe, expect, it } from "vitest";
+
+import type { AgyEvent, AgyResultEvent } from "../../src/agy-events.js";
+import type { AgyInvocationOptions } from "../../src/agy-process.js";
+import type { RuntimeLimits } from "../../src/config.js";
+import {
+  AgyProcessControllerError,
+  type ManagedAgyProcess,
+} from "../../src/process-controller.js";
+import {
+  SessionManager,
+  SessionManagerError,
+} from "../../src/session-manager.js";
+import type { AgyControllerFactory } from "../../src/session-manager.js";
+
+const LIMITS: RuntimeLimits = {
+  maxLineBytes: 1_024,
+  maxStderrBytes: 1_024,
+  maxSessions: 16,
+  initTimeoutMs: 100,
+  promptTimeoutMs: 1_000,
+  cancelGraceMs: 50,
+  hardKillGraceMs: 50,
+};
+
+function result(conversationId: string): AgyResultEvent {
+  return {
+    kind: "result",
+    conversationId,
+    durationSeconds: 1,
+    error: null,
+    numTurns: 1,
+    response: `response:${conversationId}`,
+    status: "SUCCESS",
+    usage: {},
+  };
+}
+
+interface Deferred<T> {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T | PromiseLike<T>) => void;
+  readonly reject: (error: unknown) => void;
+}
+
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+class FakeController implements ManagedAgyProcess {
+  public isClosed = false;
+  public readonly turns: unknown[] = [];
+  public cancelCount = 0;
+  public closeCount = 0;
+  readonly #eventListeners = new Set<(event: AgyEvent) => void>();
+  readonly #failureListeners = new Set<
+    (error: AgyProcessControllerError) => void
+  >();
+
+  public constructor(public readonly conversationId: string) {}
+
+  public runTurn(value: unknown): Promise<AgyResultEvent> {
+    this.turns.push(value);
+    return Promise.resolve(result(this.conversationId));
+  }
+
+  public cancel(): Promise<void> {
+    this.cancelCount += 1;
+    this.isClosed = true;
+    return Promise.resolve();
+  }
+
+  public close(): Promise<void> {
+    this.closeCount += 1;
+    this.isClosed = true;
+    return Promise.resolve();
+  }
+
+  public onEvent(listener: (event: AgyEvent) => void): () => void {
+    this.#eventListeners.add(listener);
+    return () => this.#eventListeners.delete(listener);
+  }
+
+  public onFailure(
+    listener: (error: AgyProcessControllerError) => void,
+  ): () => void {
+    this.#failureListeners.add(listener);
+    return () => this.#failureListeners.delete(listener);
+  }
+
+  public emitFailure(error: AgyProcessControllerError): void {
+    this.isClosed = true;
+    for (const listener of this.#failureListeners) {
+      listener(error);
+    }
+  }
+}
+
+function controllerHarness(options?: { readonly fixedId?: string }) {
+  const invocations: AgyInvocationOptions[] = [];
+  const controllers: FakeController[] = [];
+  let sequence = 0;
+  const factory: AgyControllerFactory = (invocation) => {
+    invocations.push(invocation);
+    const id =
+      options?.fixedId ??
+      invocation.conversationId ??
+      `session-${String(++sequence)}`;
+    const controller = new FakeController(id);
+    controllers.push(controller);
+    return Promise.resolve(controller);
+  };
+
+  return { factory, invocations, controllers };
+}
+
+describe("SessionManager", () => {
+  it("isolates controllers and prompts for multiple sessions", async () => {
+    const harness = controllerHarness();
+    const manager = new SessionManager(
+      { limits: LIMITS, executable: "/custom/agy" },
+      harness.factory,
+    );
+
+    const first = await manager.createSession({
+      cwd: "/first",
+      additionalDirectories: ["/shared"],
+    });
+    const second = await manager.createSession({ cwd: "/second" });
+
+    expect(first).toBe("session-1");
+    expect(second).toBe("session-2");
+    expect(manager.size).toBe(2);
+    await expect(manager.prompt(first, { event: "first" })).resolves.toMatchObject({
+      conversationId: "session-1",
+    });
+    await expect(manager.prompt(second, { event: "second" })).resolves.toMatchObject({
+      conversationId: "session-2",
+    });
+    expect(harness.invocations).toEqual([
+      {
+        cwd: "/first",
+        additionalDirectories: ["/shared"],
+        executable: "/custom/agy",
+      },
+      { cwd: "/second", executable: "/custom/agy" },
+    ]);
+  });
+
+  it("rejects a duplicate new-session id and closes the duplicate controller", async () => {
+    const harness = controllerHarness({ fixedId: "same-id" });
+    const manager = new SessionManager({ limits: LIMITS }, harness.factory);
+
+    await manager.createSession({ cwd: "/first" });
+    await expect(manager.createSession({ cwd: "/second" })).rejects.toMatchObject({
+      code: "SESSION_EXISTS",
+    });
+    expect(harness.controllers[1]?.closeCount).toBe(1);
+    expect(manager.size).toBe(1);
+  });
+
+  it("loads by opaque id and rejects a mismatched controller id", async () => {
+    const good = controllerHarness();
+    const goodManager = new SessionManager({ limits: LIMITS }, good.factory);
+
+    await expect(
+      goodManager.loadSession({ sessionId: "existing-id", cwd: "/workspace" }),
+    ).resolves.toBe("existing-id");
+    expect(good.invocations[0]).toMatchObject({
+      conversationId: "existing-id",
+      cwd: "/workspace",
+    });
+
+    const mismatched = controllerHarness({ fixedId: "different-id" });
+    const badManager = new SessionManager({ limits: LIMITS }, mismatched.factory);
+    await expect(
+      badManager.loadSession({ sessionId: "expected-id", cwd: "/workspace" }),
+    ).rejects.toMatchObject({ code: "SESSION_ID_MISMATCH" });
+    expect(mismatched.controllers[0]?.closeCount).toBe(1);
+  });
+
+  it("treats cancellation without a pending prompt as a no-op", async () => {
+    const harness = controllerHarness();
+    const manager = new SessionManager({ limits: LIMITS }, harness.factory);
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    const original = harness.controllers[0];
+
+    await manager.cancel(sessionId);
+    expect(original?.cancelCount).toBe(0);
+
+    await manager.prompt(sessionId, { event: "after-idle-cancel" });
+    expect(harness.invocations).toHaveLength(1);
+    expect(original?.turns).toEqual([{ event: "after-idle-cancel" }]);
+  });
+
+  it("drops a failed controller and restarts it on the next prompt", async () => {
+    const harness = controllerHarness();
+    const manager = new SessionManager({ limits: LIMITS }, harness.factory);
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+
+    harness.controllers[0]?.emitFailure(
+      new AgyProcessControllerError("PROCESS_EXITED"),
+    );
+
+    await manager.prompt(sessionId, { event: "retry" });
+    expect(harness.invocations[1]?.conversationId).toBe(sessionId);
+  });
+
+  it("closes one session and rejects later operations without echoing its id", async () => {
+    const harness = controllerHarness();
+    const manager = new SessionManager({ limits: LIMITS }, harness.factory);
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+
+    await manager.closeSession(sessionId);
+    expect(manager.size).toBe(0);
+
+    let thrown: unknown;
+    try {
+      await manager.prompt(sessionId, { event: "late" });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(SessionManagerError);
+    if (!(thrown instanceof Error)) {
+      throw new TypeError("expected SessionManagerError");
+    }
+    expect(thrown.message).not.toContain(sessionId);
+  });
+
+  it("closes every controller even when sessions are independent", async () => {
+    const harness = controllerHarness();
+    const manager = new SessionManager({ limits: LIMITS }, harness.factory);
+    await manager.createSession({ cwd: "/first" });
+    await manager.createSession({ cwd: "/second" });
+
+    await manager.closeAll();
+
+    expect(manager.size).toBe(0);
+    expect(harness.controllers.map((controller) => controller.closeCount)).toEqual([
+      1, 1,
+    ]);
+  });
+});
+
+class DeferredController extends FakeController {
+  public readonly turn = deferred<AgyResultEvent>();
+  public readonly retirement = deferred<void>();
+  #turnStarted = false;
+
+  public override runTurn(value: unknown): Promise<AgyResultEvent> {
+    this.turns.push(value);
+    this.#turnStarted = true;
+    return this.turn.promise;
+  }
+
+  public override cancel(): Promise<void> {
+    this.cancelCount += 1;
+    this.isClosed = true;
+    if (this.#turnStarted) {
+      this.turn.reject(new AgyProcessControllerError("CANCELLED"));
+    }
+    return this.retirement.promise;
+  }
+}
+
+describe("SessionManager lifecycle races", () => {
+  it("does not run a prompt cancelled before controller activation", async () => {
+    const harness = controllerHarness();
+    const manager = new SessionManager({ limits: LIMITS }, harness.factory);
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+
+    const prompting = manager.prompt(sessionId, { event: "cancelled" });
+    await manager.cancel(sessionId);
+
+    await expect(prompting).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(harness.controllers[0]?.turns).toEqual([]);
+  });
+
+  it("waits for a retiring process before lazy restart", async () => {
+    const controllers: FakeController[] = [];
+    const original = new DeferredController("session-1");
+    const factory: AgyControllerFactory = (invocation) => {
+      const controller =
+        controllers.length === 0
+          ? original
+          : new FakeController(invocation.conversationId ?? "unexpected");
+      controllers.push(controller);
+      return Promise.resolve(controller);
+    };
+    const manager = new SessionManager({ limits: LIMITS }, factory);
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    const running = manager.prompt(sessionId, { event: "running" });
+    const runningAssertion = expect(running).rejects.toMatchObject({
+      code: "CANCELLED",
+    });
+    await Promise.resolve();
+
+    const cancelling = manager.cancel(sessionId);
+    await Promise.resolve();
+    const nextPrompt = manager.prompt(sessionId, { event: "next" });
+    await Promise.resolve();
+
+    expect(controllers).toHaveLength(1);
+    original.retirement.resolve();
+    await cancelling;
+    await runningAssertion;
+    await expect(nextPrompt).resolves.toMatchObject({
+      conversationId: sessionId,
+    });
+    expect(controllers).toHaveLength(2);
+  });
+
+  it("makes closeAll an idempotent barrier for initializing sessions", async () => {
+    const startup = deferred<ManagedAgyProcess>();
+    const controller = new FakeController("late-session");
+    const manager = new SessionManager({ limits: LIMITS }, () => startup.promise);
+    const creating = manager.createSession({ cwd: "/workspace" });
+    const creatingAssertion = expect(creating).rejects.toMatchObject({
+      code: "MANAGER_CLOSED",
+    });
+
+    const firstClose = manager.closeAll();
+    const secondClose = manager.closeAll();
+    let settled = false;
+    void firstClose.then(() => {
+      settled = true;
+    });
+
+    expect(secondClose).toBe(firstClose);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    startup.resolve(controller);
+    await creatingAssertion;
+    await firstClose;
+    expect(controller.closeCount).toBe(1);
+    expect(manager.size).toBe(0);
+    await expect(manager.createSession({ cwd: "/late" })).rejects.toMatchObject({
+      code: "MANAGER_CLOSED",
+    });
+  });
+
+  it("reserves a session id before concurrent load startup", async () => {
+    const firstStartup = deferred<ManagedAgyProcess>();
+    const firstController = new FakeController("existing-id");
+    const secondController = new FakeController("existing-id");
+    let calls = 0;
+    const manager = new SessionManager({ limits: LIMITS }, () => {
+      calls += 1;
+      return calls === 1
+        ? firstStartup.promise
+        : Promise.resolve(secondController);
+    });
+
+    const first = manager.loadSession({
+      sessionId: "existing-id",
+      cwd: "/workspace",
+    });
+    const second = manager.loadSession({
+      sessionId: "existing-id",
+      cwd: "/workspace",
+    });
+    firstStartup.resolve(firstController);
+
+    await expect(first).resolves.toBe("existing-id");
+    await expect(second).rejects.toMatchObject({ code: "SESSION_EXISTS" });
+    expect(calls).toBe(1);
+    expect(secondController.closeCount).toBe(0);
+    await manager.closeAll();
+  });
+});
+
+describe("SessionManager admission", () => {
+  it("counts starting sessions and releases capacity after close", async () => {
+    const starts: Array<Deferred<ManagedAgyProcess>> = [];
+    const manager = new SessionManager(
+      { limits: { ...LIMITS, maxSessions: 1 } },
+      () => {
+        const start = deferred<ManagedAgyProcess>();
+        starts.push(start);
+        return start.promise;
+      },
+    );
+
+    const first = manager.createSession({ cwd: "/first" });
+    await expect(manager.createSession({ cwd: "/second" })).rejects.toMatchObject({
+      code: "SESSION_LIMIT",
+    });
+    expect(starts).toHaveLength(1);
+
+    starts[0]?.resolve(new FakeController("session-1"));
+    await expect(first).resolves.toBe("session-1");
+    await manager.closeSession("session-1");
+
+    const next = manager.createSession({ cwd: "/next" });
+    expect(starts).toHaveLength(2);
+    starts[1]?.resolve(new FakeController("session-2"));
+    await expect(next).resolves.toBe("session-2");
+    await manager.closeAll();
+  });
+});
+
+class SlowCloseController extends FakeController {
+  public readonly retirement = deferred<void>();
+
+  public override close(): Promise<void> {
+    this.closeCount += 1;
+    this.isClosed = true;
+    return this.retirement.promise;
+  }
+}
+
+describe("SessionManager closing reservations", () => {
+  it("holds the session id and admission slot until close settles", async () => {
+    const original = new SlowCloseController("same-id");
+    const controllers: FakeController[] = [];
+    const factory: AgyControllerFactory = () => {
+      const controller =
+        controllers.length === 0 ? original : new FakeController("same-id");
+      controllers.push(controller);
+      return Promise.resolve(controller);
+    };
+    const manager = new SessionManager(
+      { limits: { ...LIMITS, maxSessions: 1 } },
+      factory,
+    );
+    await manager.createSession({ cwd: "/workspace" });
+
+    const closing = manager.closeSession("same-id");
+    await expect(
+      manager.loadSession({ sessionId: "same-id", cwd: "/workspace" }),
+    ).rejects.toMatchObject({ code: "SESSION_EXISTS" });
+    expect(controllers).toHaveLength(1);
+
+    original.retirement.resolve();
+    await closing;
+    await expect(
+      manager.loadSession({ sessionId: "same-id", cwd: "/workspace" }),
+    ).resolves.toBe("same-id");
+    expect(controllers).toHaveLength(2);
+    await manager.closeAll();
+  });
+});
+
+class ActiveCloseController extends FakeController {
+  public readonly activeTurn = deferred<AgyResultEvent>();
+
+  public override runTurn(value: unknown): Promise<AgyResultEvent> {
+    this.turns.push(value);
+    return this.activeTurn.promise;
+  }
+
+  public override cancel(): Promise<void> {
+    this.cancelCount += 1;
+    this.isClosed = true;
+    this.activeTurn.reject(new AgyProcessControllerError("CANCELLED"));
+    return Promise.resolve();
+  }
+
+  public override close(): Promise<void> {
+    this.closeCount += 1;
+    this.isClosed = true;
+    this.activeTurn.reject(new AgyProcessControllerError("PROCESS_CLOSED"));
+    return Promise.resolve();
+  }
+}
+
+describe("SessionManager cancellation arbitration", () => {
+  it("aborts a lazy restart and returns cancellation before startup timeout", async () => {
+    const initial = new FakeController("session-1");
+    let calls = 0;
+    let startupSignal: AbortSignal | undefined;
+    const manager = new SessionManager({ limits: LIMITS }, (_invocation, signal) => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(initial);
+      }
+      startupSignal = signal;
+      return new Promise<ManagedAgyProcess>((_resolve, reject) => {
+        const cancel = (): void =>
+          reject(new AgyProcessControllerError("CANCELLED"));
+        if (signal?.aborted === true) {
+          cancel();
+        } else {
+          signal?.addEventListener("abort", cancel, { once: true });
+        }
+      });
+    });
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    initial.emitFailure(new AgyProcessControllerError("PROCESS_EXITED"));
+    await Promise.resolve();
+
+    const prompting = manager.prompt(sessionId, { event: "restart" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(startupSignal).toBeDefined();
+
+    await manager.cancel(sessionId);
+    await expect(prompting).rejects.toMatchObject({ code: "CANCELLED" });
+    await manager.closeAll();
+  });
+
+  it("cancels active work before closing the session", async () => {
+    const controller = new ActiveCloseController("session-1");
+    const manager = new SessionManager(
+      { limits: LIMITS },
+      () => Promise.resolve(controller),
+    );
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    const prompting = manager.prompt(sessionId, { event: "active" });
+    await Promise.resolve();
+
+    await manager.closeSession(sessionId);
+
+    await expect(prompting).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(controller.cancelCount).toBe(1);
+    expect(manager.size).toBe(0);
+  });
+
+  it("releases the session reservation when active cancellation rejects", async () => {
+    const controller = new ActiveCloseController("session-1");
+    controller.cancel = () => {
+      controller.cancelCount += 1;
+      controller.isClosed = true;
+      controller.activeTurn.reject(new AgyProcessControllerError("CANCELLED"));
+      return Promise.reject(new Error("cancel failed"));
+    };
+    const manager = new SessionManager(
+      { limits: LIMITS },
+      () => Promise.resolve(controller),
+    );
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    const prompting = manager.prompt(sessionId, { event: "active" });
+    await Promise.resolve();
+
+    await expect(manager.closeSession(sessionId)).rejects.toThrow("cancel failed");
+    await expect(prompting).rejects.toMatchObject({ code: "CANCELLED" });
+    expect(manager.size).toBe(0);
+  });
+});
+
+describe("SessionManager retirement cancellation precedence", () => {
+  it("returns cancellation when close aborts a prompt waiting for retirement", async () => {
+    const original = new DeferredController("session-1");
+    const controllers: FakeController[] = [];
+    const manager = new SessionManager({ limits: LIMITS }, (invocation) => {
+      const controller =
+        controllers.length === 0
+          ? original
+          : new FakeController(invocation.conversationId ?? "unexpected");
+      controllers.push(controller);
+      return Promise.resolve(controller);
+    });
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    const firstPrompt = manager.prompt(sessionId, { event: "first" });
+    await Promise.resolve();
+
+    const cancelling = manager.cancel(sessionId);
+    await expect(firstPrompt).rejects.toMatchObject({ code: "CANCELLED" });
+    const queuedPrompt = manager.prompt(sessionId, { event: "queued" });
+    await Promise.resolve();
+    const closing = manager.closeSession(sessionId);
+
+    original.retirement.resolve();
+    await cancelling;
+    await expect(queuedPrompt).rejects.toMatchObject({ code: "CANCELLED" });
+    await closing;
+    expect(controllers).toHaveLength(1);
+  });
+});
+
+describe("SessionManager retirement rejection cancellation precedence", () => {
+  it("returns cancellation when an aborted retirement wait rejects", async () => {
+    const original = new DeferredController("session-1");
+    const controllers: FakeController[] = [];
+    const manager = new SessionManager({ limits: LIMITS }, (invocation) => {
+      const controller =
+        controllers.length === 0
+          ? original
+          : new FakeController(invocation.conversationId ?? "unexpected");
+      controllers.push(controller);
+      return Promise.resolve(controller);
+    });
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    const firstPrompt = manager.prompt(sessionId, { event: "first" });
+    await Promise.resolve();
+
+    const cancelling = manager.cancel(sessionId);
+    await expect(firstPrompt).rejects.toMatchObject({ code: "CANCELLED" });
+    const queuedPrompt = manager.prompt(sessionId, { event: "queued" });
+    await Promise.resolve();
+    const closing = manager.closeSession(sessionId);
+    const assertions = Promise.all([
+      expect(cancelling).rejects.toThrow("retirement failed"),
+      expect(queuedPrompt).rejects.toMatchObject({ code: "CANCELLED" }),
+      expect(closing).rejects.toThrow("retirement failed"),
+    ]);
+
+    original.retirement.reject(new Error("retirement failed"));
+    await assertions;
+    expect(controllers).toHaveLength(1);
+    expect(manager.size).toBe(0);
+  });
+});
+
+describe("SessionManager startup rejection cancellation precedence", () => {
+  it("returns cancellation when an aborted lazy startup rejects", async () => {
+    const initial = new FakeController("session-1");
+    const startup = deferred<ManagedAgyProcess>();
+    let calls = 0;
+    const manager = new SessionManager({ limits: LIMITS }, () => {
+      calls += 1;
+      return calls === 1 ? Promise.resolve(initial) : startup.promise;
+    });
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    initial.emitFailure(new AgyProcessControllerError("PROCESS_EXITED"));
+    await Promise.resolve();
+
+    const prompting = manager.prompt(sessionId, { event: "restart" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls).toBe(2);
+    const closing = manager.closeSession(sessionId);
+    const assertions = Promise.all([
+      expect(prompting).rejects.toMatchObject({ code: "CANCELLED" }),
+      expect(closing).resolves.toBeUndefined(),
+    ]);
+
+    startup.reject(new Error("startup failed"));
+    await assertions;
+    expect(manager.size).toBe(0);
+  });
+});
