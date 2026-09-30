@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: 최신 head 전체 diff에 runtime/protocol과 public-release 독립 재리뷰를 병렬 수행하고 남은 findings를 수정합니다.
+- 다음 작업: async stdin EPIPE, close 중 same-ID load/admission, failed-init shutdown barrier를 RED tests로 재현하고 수정합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -115,7 +115,14 @@
 - [x] Publication remediation: `scripts/package-smoke.mjs`가 actual tarball pack→scratch clean install→package import→packaged CLI/fake child ACP smoke→cleanup을 수행합니다.
 - [x] CI Ubuntu Node 24 package step을 dry-run에서 actual `npm run test:package`로 강화했습니다.
 - [x] Package remediation 후 unit 77/77, mock E2E 8/8, packaged import/bin smoke 통과.
-- [ ] Exact-head 독립 재리뷰와 남은 history/public release 결정을 수행합니다.
+- [x] Exact-head 독립 재리뷰 2개를 수행했습니다.
+- Runtime/protocol 2차: Critical 0, High 3, Medium 5, Low 2 — FAIL.
+- Public release 2차: Critical 0, High 0, Medium 1, Low 4 — local code/package PASS, hosted matrix evidence 부족.
+- 남은 High: async stdin EPIPE unhandled, close 중 session ID/admission 조기 해제, failed init 종료 전 startup barrier 해제.
+- 남은 Medium: new/load request cancellation, active close cancellation semantics, lazy-start cancel arbitration, result listener barrier, Windows taskkill failure fallback.
+- 남은 Low/current: busy error classification, streamed final suffix, design-doc 3곳과 PR evidence drift.
+- Publication-only: root metadata rewrite, hosted macOS/Windows green, Windows package shim, npm scope ownership, private vulnerability reporting, release 때 `private:true` 제거.
+- [ ] High 3개와 Medium/Low runtime findings를 수정하고 exact-head focused 재리뷰합니다.
 
 
 ## 진행 중
