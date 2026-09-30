@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: 공개 배포·사용 문서와 CI
+- 현재 단계: 최종 검토 및 공개 전 hygiene
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: package tarball을 session scratch clean project에 설치해 executable smoke를 수행하고, repository/package secret·machine-path scan 후 draft PR을 갱신해 hosted Actions quota 상태를 확인합니다.
+- 다음 작업: PR 본문에 실제 local/hosted 검증을 반영하고 독립 코드리뷰를 수행합니다. 최초 commit `21334d1`의 machine-specific author/committer metadata는 공개 전 history rewrite 승인 항목으로 유지합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -73,6 +73,10 @@
 - [x] `npm pack --dry-run --ignore-scripts` 결과가 LICENSE, README, compiled JS/declarations, package.json만 포함하고 source map·tests·tasks·roadmap·환경 파일을 제외함을 확인했습니다.
 - [x] checkout v7.0.1과 setup-node v7.0.0의 tag commit SHA를 pin한 Node 22/24·Linux/macOS/Windows CI를 작성하고 YAML parsing을 통과했습니다.
 - [x] Public metadata 반영 후 `npm run check`: unit 50/50, mock E2E 7/7, lint, typecheck, build 통과.
+- [x] 실제 package tarball을 session scratch clean project에 설치하고 packaged `agy-acp` bin→fake child ACP smoke를 통과했습니다.
+- [x] Tracked files, patch history, installed package의 credential·machine-path content scan은 clean입니다.
+- [x] Hosted CI run 36696258541의 Linux/macOS/Windows 4개 job 모두 `runner_id=0`, steps `[]`로 runner allocation 전에 실패해 Actions 사용량 소진임을 확인했습니다.
+- [ ] Root commit `21334d1`의 author/committer metadata에 machine-specific identity가 있습니다. Public 전 history rewrite에는 명시적 승인이 필요합니다.
 
 ## 진행 중
 
@@ -91,7 +95,8 @@
 - [x] failure·cancel·concurrent E2E matrix
 - [x] 실제 agy ACP smoke
 - [x] 공개 배포 문서·metadata·CI
-- [ ] clean package install·scan·hosted CI
+- [x] clean package install·content scan·hosted CI
+- [ ] 독립 리뷰·history metadata 결정·PR 완료
 
 ## 대기
 

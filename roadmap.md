@@ -67,9 +67,9 @@
 - [x] package metadata, license, ignore, semantic version 정책, release 전 검증 구성을 정리합니다.
 - [x] `CONTRIBUTING.md`, `SECURITY.md`와 공개 issue/PR 기여 기준을 작성합니다.
 - [x] npm package가 source map·credential·개인 경로·local fixture를 포함하지 않는지 `npm pack --dry-run`으로 검증합니다.
-- [ ] session scratch의 clean directory에 package를 설치해 `agy-acp` executable smoke를 수행합니다.
+- [x] session scratch의 clean directory에 package를 설치해 `agy-acp` executable smoke를 수행합니다.
 - [x] Linux·macOS·Windows를 대상으로 GitHub Actions workflow를 작성합니다.
-- [ ] Actions 사용량 소진으로 실행 전 실패하면 원인과 local 검증 결과를 PR에 기록합니다.
+- [x] Actions 사용량 소진으로 실행 전 실패하면 원인과 local 검증 결과를 PR에 기록합니다.
 - [ ] 공개 전 repository history와 package contents에 secret·token·machine-specific path가 없음을 검사합니다.
 
 ## 7. 완료 게이트
