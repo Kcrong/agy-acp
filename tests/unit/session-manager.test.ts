@@ -404,3 +404,45 @@ describe("SessionManager admission", () => {
     await manager.closeAll();
   });
 });
+
+class SlowCloseController extends FakeController {
+  public readonly retirement = deferred<void>();
+
+  public override close(): Promise<void> {
+    this.closeCount += 1;
+    this.isClosed = true;
+    return this.retirement.promise;
+  }
+}
+
+describe("SessionManager closing reservations", () => {
+  it("holds the session id and admission slot until close settles", async () => {
+    const original = new SlowCloseController("same-id");
+    const controllers: FakeController[] = [];
+    const factory: AgyControllerFactory = () => {
+      const controller =
+        controllers.length === 0 ? original : new FakeController("same-id");
+      controllers.push(controller);
+      return Promise.resolve(controller);
+    };
+    const manager = new SessionManager(
+      { limits: { ...LIMITS, maxSessions: 1 } },
+      factory,
+    );
+    await manager.createSession({ cwd: "/workspace" });
+
+    const closing = manager.closeSession("same-id");
+    await expect(
+      manager.loadSession({ sessionId: "same-id", cwd: "/workspace" }),
+    ).rejects.toMatchObject({ code: "SESSION_EXISTS" });
+    expect(controllers).toHaveLength(1);
+
+    original.retirement.resolve();
+    await closing;
+    await expect(
+      manager.loadSession({ sessionId: "same-id", cwd: "/workspace" }),
+    ).resolves.toBe("same-id");
+    expect(controllers).toHaveLength(2);
+    await manager.closeAll();
+  });
+});

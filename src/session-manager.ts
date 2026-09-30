@@ -235,12 +235,17 @@ export class SessionManager {
 
   public async closeSession(sessionId: string): Promise<void> {
     const record = this.#requireRecord(sessionId);
-    this.#sessions.delete(sessionId);
     record.closed = true;
     if (record.prompt !== undefined) {
       record.prompt.cancelled = true;
     }
-    await this.#closeRecord(record);
+    try {
+      await this.#closeRecord(record);
+    } finally {
+      if (this.#sessions.get(sessionId) === record) {
+        this.#sessions.delete(sessionId);
+      }
+    }
   }
 
   public closeAll(): Promise<void> {

@@ -192,8 +192,9 @@ describe("AgyProcessController", () => {
     });
 
     await vi.advanceTimersByTimeAsync(10);
-    await assertion;
     expect(fake.signals).toEqual(["SIGTERM"]);
+    fake.emitExit(null, "SIGTERM");
+    await assertion;
   });
 
   it("rejects when the process exits before init", async () => {
@@ -522,5 +523,64 @@ describe("AgyProcessController terminal ordering", () => {
     expect(failures).toHaveLength(1);
     expect(failures[0]).toMatchObject({ code: "INVALID_OUTPUT" });
     expect(fake.signals).toEqual(["SIGTERM"]);
+  });
+});
+
+describe("AgyProcessController high-severity barriers", () => {
+  it("handles an asynchronous stdin EPIPE after write returned true", async () => {
+    class AsyncEpipeWritable extends Writable {
+      public override _write(
+        _chunk: Buffer,
+        _encoding: BufferEncoding,
+        callback: (error?: Error | null) => void,
+      ): void {
+        setImmediate(() => {
+          const error = new Error("simulated EPIPE");
+          this.emit("error", error);
+          callback(error);
+        });
+      }
+    }
+
+    const stdin = new AsyncEpipeWritable({ highWaterMark: 1_024 });
+    const fake = createFakeProcess(stdin);
+    const controller = await startReady(fake);
+    const failures: AgyProcessControllerError[] = [];
+    controller.onFailure((error) => failures.push(error));
+
+    await expect(controller.runTurn({ event: "user" })).rejects.toMatchObject({
+      code: "WRITE_FAILED",
+    });
+    await immediate();
+
+    expect(failures).toHaveLength(1);
+    expect(controller.isClosed).toBe(true);
+    expect(fake.signals).toEqual(["SIGTERM"]);
+  });
+
+  it("waits for child retirement before rejecting failed initialization", async () => {
+    const fake = createFakeProcess();
+    const started = AgyProcessController.start(
+      {
+        invocation: { cwd: "/workspace" },
+        limits: LIMITS,
+      },
+      spawnReturning(fake),
+    );
+    let settled = false;
+    const captured = started.catch((error: unknown) => {
+      settled = true;
+      return error;
+    });
+
+    fake.stdout.write("{broken}\n");
+    await immediate();
+
+    expect(fake.signals).toEqual(["SIGTERM"]);
+    expect(settled).toBe(false);
+
+    fake.emitExit(1);
+    const error = await captured;
+    expect(error).toMatchObject({ code: "INVALID_OUTPUT" });
   });
 });

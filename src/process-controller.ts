@@ -117,6 +117,7 @@ export class AgyProcessController implements ManagedAgyProcess {
 
     child.stdout.on("data", this.#handleStdout);
     child.stdout.on("end", this.#handleStdoutEnd);
+    child.stdin.on("error", this.#handleStdinError);
     child.stderr.on("data", this.#handleStderr);
     child.on("error", this.#handleProcessError);
     child.on("exit", this.#handleExit);
@@ -143,8 +144,13 @@ export class AgyProcessController implements ManagedAgyProcess {
     }
 
     const controller = new AgyProcessController(child, options.limits);
-    await controller.#ready;
-    return controller;
+    try {
+      await controller.#ready;
+      return controller;
+    } catch (error) {
+      await controller.close();
+      throw error;
+    }
   }
 
   public get conversationId(): string {
@@ -193,15 +199,13 @@ export class AgyProcessController implements ManagedAgyProcess {
       throw new AgyProcessControllerError("WRITE_FAILED");
     }
 
-    let accepted: boolean;
     try {
-      accepted = this.#child.stdin.write(line);
+      await writeWithBackpressure(this.#child.stdin, line);
     } catch (error) {
+      if (error instanceof AgyProcessControllerError) {
+        throw error;
+      }
       throw new AgyProcessControllerError("WRITE_FAILED", error);
-    }
-
-    if (!accepted) {
-      await waitForDrain(this.#child.stdin);
     }
   }
 
@@ -295,6 +299,10 @@ export class AgyProcessController implements ManagedAgyProcess {
     } catch (error) {
       this.#fail(new AgyProcessControllerError("INVALID_OUTPUT", error));
     }
+  };
+
+  readonly #handleStdinError = (error: Error): void => {
+    this.#fail(new AgyProcessControllerError("WRITE_FAILED", error));
   };
 
   readonly #handleStderr = (chunk: string | Uint8Array): void => {
@@ -532,6 +540,7 @@ export class AgyProcessController implements ManagedAgyProcess {
   #cleanupListeners(): void {
     this.#child.stdout.off("data", this.#handleStdout);
     this.#child.stdout.off("end", this.#handleStdoutEnd);
+    this.#child.stdin.off("error", this.#handleStdinError);
     this.#child.stderr.off("data", this.#handleStderr);
     this.#child.off("error", this.#handleProcessError);
     this.#child.off("exit", this.#handleExit);
@@ -548,29 +557,65 @@ export class AgyProcessController implements ManagedAgyProcess {
   }
 }
 
-async function waitForDrain(stream: Writable): Promise<void> {
+async function writeWithBackpressure(
+  stream: Writable,
+  line: string,
+): Promise<void> {
   await new Promise<void>((resolve, reject) => {
+    let writeReturned = false;
+    let callbackDone = false;
+    let drainDone = false;
+    let settled = false;
+
     const cleanup = (): void => {
       stream.off("drain", onDrain);
-      stream.off("error", onError);
       stream.off("close", onClose);
     };
-    const onDrain = (): void => {
-      cleanup();
-      resolve();
+    const succeedIfReady = (): void => {
+      if (!settled && writeReturned && callbackDone && drainDone) {
+        settled = true;
+        cleanup();
+        resolve();
+      }
     };
-    const onError = (error: Error): void => {
+    const fail = (error: unknown): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       cleanup();
-      reject(new AgyProcessControllerError("WRITE_FAILED", error));
+      reject(
+        error instanceof Error ? error : new Error("Stream write failed"),
+      );
+    };
+    const onDrain = (): void => {
+      drainDone = true;
+      succeedIfReady();
     };
     const onClose = (): void => {
-      cleanup();
-      reject(new AgyProcessControllerError("PROCESS_CLOSED"));
+      fail(new AgyProcessControllerError("PROCESS_CLOSED"));
+    };
+    const onWrite = (error?: Error | null): void => {
+      if (error !== undefined && error !== null) {
+        fail(error);
+        return;
+      }
+      callbackDone = true;
+      succeedIfReady();
     };
 
-    stream.once("drain", onDrain);
-    stream.once("error", onError);
     stream.once("close", onClose);
+    try {
+      const accepted = stream.write(line, onWrite);
+      writeReturned = true;
+      drainDone = accepted;
+      if (!accepted) {
+        stream.once("drain", onDrain);
+      }
+      succeedIfReady();
+    } catch (error) {
+      fail(error);
+    }
   });
 }
 

@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: async stdin EPIPE, close 중 same-ID load/admission, failed-init shutdown barrier를 RED tests로 재현하고 수정합니다.
+- 다음 작업: new/load AbortSignal, active close cancellation, lazy-start cancel arbitration, result listener-before-resolve, Windows taskkill failure fallback을 RED tests로 수정합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -122,7 +122,11 @@
 - 남은 Medium: new/load request cancellation, active close cancellation semantics, lazy-start cancel arbitration, result listener barrier, Windows taskkill failure fallback.
 - 남은 Low/current: busy error classification, streamed final suffix, design-doc 3곳과 PR evidence drift.
 - Publication-only: root metadata rewrite, hosted macOS/Windows green, Windows package shim, npm scope ownership, private vulnerability reporting, release 때 `private:true` 제거.
-- [ ] High 3개와 Medium/Low runtime findings를 수정하고 exact-head focused 재리뷰합니다.
+- [x] High: persistent stdin error listener와 write callback+drain barrier로 async EPIPE를 `WRITE_FAILED` fatal shutdown으로 전환합니다.
+- [x] High: close 중 session ID와 admission slot을 process retirement 완료까지 유지합니다.
+- [x] High: pre-init failure는 child shutdown/close barrier 후에만 `start()`를 reject해 failed startup retry가 process cap을 우회하지 못합니다.
+- [x] High barrier targeted 34/34, 전체 unit 80/80, mock E2E 8/8, lint, typecheck, build 통과.
+- [ ] Medium: new/load request cancel, active close cancel semantics, lazy-start cancel arbitration, result-listener barrier, Windows taskkill failure fallback.
 
 
 ## 진행 중

@@ -77,7 +77,8 @@ Prompt timeout도 같은 종료 절차를 사용하지만 `cancelled`가 아니�
 
 ## Backpressure와 bounded resource
 
-- stdin write가 `false`를 반환하면 `drain` 후 다음 message를 씁니다.
+- stdin write는 persistent error listener, write callback, `drain`을 모두 기다리며 EPIPE를 controller fatal failure로 전환합니다.
+- Initialization failure는 child shutdown barrier가 완료된 뒤에만 caller와 admission slot에 반환됩니다.
 - stdout event listener는 async completion을 반환할 수 있으며, downstream ACP notification이 끝날 때까지 child stdout을 pause합니다.
 - Event batch는 순서대로 하나씩 처리하고 최신 batch가 성공한 뒤에만 stdout을 resume합니다. Listener rejection은 즉시 typed failure와 bounded shutdown으로 전환합니다.
 - stdout은 chunk 경계를 신뢰하지 않고 newline 기준 bounded parser로 처리합니다.
