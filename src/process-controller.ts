@@ -7,6 +7,7 @@ import {
   type AgyResultEvent,
 } from "./agy-events.js";
 import {
+  AgyProcessConfigError,
   spawnAgyProcess,
   type AgyInvocationOptions,
   type AgySpawnFunction,
@@ -134,6 +135,9 @@ export class AgyProcessController implements ManagedAgyProcess {
     try {
       child = spawnAgyProcess(options.invocation, spawn);
     } catch (error) {
+      if (error instanceof AgyProcessConfigError) {
+        throw error;
+      }
       throw new AgyProcessControllerError("SPAWN_FAILED", error);
     }
 

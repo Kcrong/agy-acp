@@ -5,8 +5,10 @@ import {
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
 import { describe, expect, it } from "vitest";
+import { setImmediate as immediate } from "node:timers/promises";
 
 import type { AgyResultEvent } from "../../src/agy-events.js";
+import { AgyProcessConfigError } from "../../src/agy-process.js";
 import {
   createAgyAgent,
   type AgySessionService,
@@ -15,9 +17,10 @@ import {
   AgyProcessControllerError,
   type AgyEventListener,
 } from "../../src/process-controller.js";
-import type {
-  CreateSessionOptions,
-  LoadSessionOptions,
+import {
+  SessionManagerError,
+  type CreateSessionOptions,
+  type LoadSessionOptions,
 } from "../../src/session-manager.js";
 
 function successResult(sessionId = "session-1"): AgyResultEvent {
@@ -40,17 +43,25 @@ class FakeSessionService implements AgySessionService {
   public readonly cancellations: string[] = [];
   public readonly closes: string[] = [];
   public closeAllCount = 0;
+  public createError: Error | undefined;
+  public loadError: Error | undefined;
   public promptError: Error | undefined;
+  public holdPrompt = false;
+  public rejectHeldPrompt: ((error: Error) => void) | undefined;
   public promptResult = successResult();
 
   public createSession(options: CreateSessionOptions): Promise<string> {
     this.creates.push(options);
-    return Promise.resolve("session-1");
+    return this.createError === undefined
+      ? Promise.resolve("session-1")
+      : Promise.reject(this.createError);
   }
 
   public loadSession(options: LoadSessionOptions): Promise<string> {
     this.loads.push(options);
-    return Promise.resolve(options.sessionId);
+    return this.loadError === undefined
+      ? Promise.resolve(options.sessionId)
+      : Promise.reject(this.loadError);
   }
 
   public prompt(
@@ -70,6 +81,11 @@ class FakeSessionService implements AgySessionService {
       usage: undefined,
     });
     return Promise.resolve(emitted).then(() => {
+      if (this.holdPrompt) {
+        return new Promise<AgyResultEvent>((_resolve, reject) => {
+          this.rejectHeldPrompt = reject;
+        });
+      }
       if (this.promptError !== undefined) {
         throw this.promptError;
       }
@@ -79,6 +95,8 @@ class FakeSessionService implements AgySessionService {
 
   public cancel(sessionId: string): Promise<void> {
     this.cancellations.push(sessionId);
+    this.rejectHeldPrompt?.(new AgyProcessControllerError("CANCELLED"));
+    this.rejectHeldPrompt = undefined;
     return Promise.resolve();
   }
 
@@ -237,6 +255,78 @@ describe("createAgyAgent", () => {
           prompt: [{ type: "text", text: "cancel me" }],
         }),
       ).resolves.toEqual({ stopReason: "cancelled" });
+    });
+  });
+});
+
+describe("createAgyAgent request boundaries", () => {
+  it("cancels the session when the SDK prompt request signal aborts", async () => {
+    const service = new FakeSessionService();
+    service.holdPrompt = true;
+    const app = createAgyAgent(service);
+
+    await client({ name: "test-client" }).connectWith(app, async (context) => {
+      const abort = new AbortController();
+      const prompting = context.request(
+        methods.agent.session.prompt,
+        {
+          sessionId: "session-1",
+          prompt: [{ type: "text", text: "cancel request" }],
+        },
+        { cancellationSignal: abort.signal },
+      );
+      await immediate();
+      expect(service.rejectHeldPrompt).toBeDefined();
+      abort.abort();
+
+      await expect(prompting).rejects.toMatchObject({ code: -32800 });
+      await Promise.resolve();
+      expect(service.cancellations).toEqual(["session-1"]);
+    });
+  });
+
+  it("maps client configuration errors separately from backend identity errors", async () => {
+    const service = new FakeSessionService();
+    const app = createAgyAgent(service);
+
+    await client({ name: "test-client" }).connectWith(app, async (context) => {
+      service.createError = new AgyProcessConfigError("cwd");
+      await expect(
+        context.request(methods.agent.session.new, {
+          cwd: "relative",
+          mcpServers: [],
+        }),
+      ).rejects.toMatchObject({ code: -32602 });
+
+      service.createError = undefined;
+      service.loadError = new SessionManagerError("SESSION_ID_MISMATCH");
+      await expect(
+        context.request(methods.agent.session.load, {
+          cwd: "/workspace",
+          sessionId: "opaque-id",
+          mcpServers: [],
+        }),
+      ).rejects.toMatchObject({ code: -32603 });
+    });
+  });
+
+  it("does not infer client cancellation from backend error text", async () => {
+    const service = new FakeSessionService();
+    service.promptResult = {
+      ...successResult(),
+      status: "ERROR",
+      error: "provider context canceled unexpectedly",
+      response: "",
+    };
+    const app = createAgyAgent(service);
+
+    await client({ name: "test-client" }).connectWith(app, async (context) => {
+      await expect(
+        context.request(methods.agent.session.prompt, {
+          sessionId: "session-1",
+          prompt: [{ type: "text", text: "backend failure" }],
+        }),
+      ).rejects.toMatchObject({ code: -32603 });
     });
   });
 });

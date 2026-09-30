@@ -15,6 +15,7 @@ import type { RuntimeLimits } from "../../src/config.js";
 const LIMITS: RuntimeLimits = {
   maxLineBytes: 1_024,
   maxStderrBytes: 8,
+  maxSessions: 16,
   initTimeoutMs: 100,
   promptTimeoutMs: 1_000,
   cancelGraceMs: 50,

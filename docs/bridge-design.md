@@ -94,6 +94,9 @@ Prompt timeout도 같은 종료 절차를 사용하지만 `cancelled`가 아니�
 - 등록하지 않은 ACP method는 SDK의 JSON-RPC `Method not found`를 사용합니다.
 - 지원 method의 잘못된 path, prompt block, non-empty MCP list는 `Invalid params`로 반환합니다.
 - 실행 파일 없음, init timeout, malformed output, 조기 exit, busy session, unknown session, prompt timeout을 서로 다른 typed error code로 구분합니다.
+- 최대 active+starting session 수를 admission 전에 원자적으로 reserve하며 기본값은 16입니다. 초과 요청은 process를 만들기 전에 거부합니다.
+- SDK `$/cancel_request` AbortSignal은 동일 session cancel에 연결하고 `RequestError.requestCancelled`로 응답합니다.
+- Client path/config 오류는 `Invalid params`, backend identity/manager 오류는 `Internal error`, capacity 초과는 bounded server error로 구분합니다.
 - stderr 원문, command environment, credential, conversation ID는 기본 오류 메시지에 포함하지 않습니다.
 - `agy`는 argv 배열과 `shell: false`로 실행하고 caller environment는 상속하되 열거하거나 로그로 출력하지 않습니다.
 

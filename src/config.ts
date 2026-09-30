@@ -1,6 +1,7 @@
 export interface RuntimeLimits {
   readonly maxLineBytes: number;
   readonly maxStderrBytes: number;
+  readonly maxSessions: number;
   readonly initTimeoutMs: number;
   readonly promptTimeoutMs: number;
   readonly cancelGraceMs: number;
@@ -10,6 +11,7 @@ export interface RuntimeLimits {
 export const DEFAULT_LIMITS: Readonly<RuntimeLimits> = Object.freeze({
   maxLineBytes: 4 * 1024 * 1024,
   maxStderrBytes: 64 * 1024,
+  maxSessions: 16,
   initTimeoutMs: 15_000,
   promptTimeoutMs: 30 * 60 * 1_000,
   cancelGraceMs: 5_000,
@@ -31,6 +33,7 @@ export class RuntimeConfigError extends Error {
 const ENVIRONMENT_KEYS: Readonly<Record<RuntimeLimitField, string>> = {
   maxLineBytes: "AGY_ACP_MAX_LINE_BYTES",
   maxStderrBytes: "AGY_ACP_MAX_STDERR_BYTES",
+  maxSessions: "AGY_ACP_MAX_SESSIONS",
   initTimeoutMs: "AGY_ACP_INIT_TIMEOUT_MS",
   promptTimeoutMs: "AGY_ACP_PROMPT_TIMEOUT_MS",
   cancelGraceMs: "AGY_ACP_CANCEL_GRACE_MS",
@@ -44,6 +47,7 @@ export function runtimeLimitsFromEnv(
   return {
     maxLineBytes: readPositiveInteger(env, "maxLineBytes", defaults),
     maxStderrBytes: readPositiveInteger(env, "maxStderrBytes", defaults),
+    maxSessions: readPositiveInteger(env, "maxSessions", defaults),
     initTimeoutMs: readPositiveInteger(env, "initTimeoutMs", defaults),
     promptTimeoutMs: readPositiveInteger(env, "promptTimeoutMs", defaults),
     cancelGraceMs: readPositiveInteger(env, "cancelGraceMs", defaults),

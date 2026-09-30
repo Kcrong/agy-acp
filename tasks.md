@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: ACP request AbortSignal을 session cancel에 연결하고 invalid path는 -32602, backend identity mismatch는 -32603으로 구분하며 configurable session admission limit을 RED tests로 구현합니다.
+- 다음 작업: server startup에서 `agy` executable을 absolute path로 resolve하고 POSIX process group·Windows tree-kill abstraction을 RED tests로 구현합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -101,7 +101,11 @@
 - [x] Medium: stdin write/drain failure가 controller fatal shutdown·retirement로 이어집니다.
 - [x] Medium: duplicate init, idle step/result, contradictory SUCCESS/error·ERROR/no-error를 fail-close합니다.
 - [x] Terminal ordering/event invariant targeted 31/31, typecheck, lint 통과.
-- [ ] Medium remediation: SDK request AbortSignal, invalid path/backend error mapping, session admission limit, executable absolute resolution, process-tree termination.
+- [x] Medium: SDK `cancellationSignal`→handler AbortSignal→session cancel을 연결하고 `-32800` request-cancelled로 응답합니다.
+- [x] Medium/Low: relative path/config는 `-32602`, backend identity/manager fault는 `-32603`, capacity는 bounded server error로 분류합니다. Backend error text로 cancel을 추론하지 않습니다.
+- [x] Medium: 기본 16개의 active+starting session admission limit과 `AGY_ACP_MAX_SESSIONS` override를 추가했습니다.
+- [x] Request/admission/error targeted 23/23, relative cwd real CLI E2E regression 추가.
+- [ ] Medium remediation: executable absolute resolution과 POSIX/Windows process-tree termination.
 
 
 ## 진행 중

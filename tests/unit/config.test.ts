@@ -18,6 +18,7 @@ describe("DEFAULT_LIMITS", () => {
     expect(DEFAULT_LIMITS).toEqual({
       maxLineBytes: 4 * 1024 * 1024,
       maxStderrBytes: 64 * 1024,
+      maxSessions: 16,
       initTimeoutMs: 15_000,
       promptTimeoutMs: 30 * 60 * 1_000,
       cancelGraceMs: 5_000,

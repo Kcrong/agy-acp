@@ -244,3 +244,16 @@ describe("agy-acp failure matrix", () => {
     });
   });
 });
+
+describe("agy-acp request validation", () => {
+  it("returns invalid params for a relative session cwd", async () => {
+    await withCli("normal", async ({ agent }) => {
+      await expect(
+        agent.request(methods.agent.session.new, {
+          cwd: "relative/path",
+          mcpServers: [],
+        }),
+      ).rejects.toMatchObject({ code: -32602 });
+    });
+  });
+});

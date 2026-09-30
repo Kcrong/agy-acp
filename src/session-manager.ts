@@ -14,7 +14,8 @@ export type SessionManagerErrorCode =
   | "SESSION_ID_MISMATCH"
   | "INVALID_SESSION"
   | "MANAGER_CLOSED"
-  | "SESSION_BUSY";
+  | "SESSION_BUSY"
+  | "SESSION_LIMIT";
 
 export interface SessionManagerOptions {
   readonly limits: RuntimeLimits;
@@ -68,6 +69,7 @@ export class SessionManager {
   readonly #sessions = new Map<string, SessionRecord>();
   readonly #pendingStarts = new Set<Promise<void>>();
   readonly #reservedSessionIds = new Set<string>();
+  #startingSessions = 0;
   #closed = false;
   #closePromise: Promise<void> | undefined;
 
@@ -91,6 +93,7 @@ export class SessionManager {
 
   public async createSession(options: CreateSessionOptions): Promise<string> {
     this.#assertOpen();
+    this.#reserveSessionSlot();
     return this.#trackStart(async () => {
       const controller = await this.#factory(this.#buildInvocation(options));
       if (this.#closed) {
@@ -111,6 +114,8 @@ export class SessionManager {
       this.#sessions.set(sessionId, record);
       this.#watchFailure(record, controller);
       return sessionId;
+    }).finally(() => {
+      this.#startingSessions -= 1;
     });
   }
 
@@ -124,6 +129,7 @@ export class SessionManager {
       return Promise.reject(new SessionManagerError("SESSION_EXISTS"));
     }
 
+    this.#reserveSessionSlot();
     this.#reservedSessionIds.add(options.sessionId);
     return this.#trackStart(async () => {
       try {
@@ -150,6 +156,8 @@ export class SessionManager {
       } finally {
         this.#reservedSessionIds.delete(options.sessionId);
       }
+    }).finally(() => {
+      this.#startingSessions -= 1;
     });
   }
 
@@ -401,6 +409,16 @@ export class SessionManager {
     return start;
   }
 
+  #reserveSessionSlot(): void {
+    if (
+      this.#sessions.size + this.#startingSessions >=
+      this.#options.limits.maxSessions
+    ) {
+      throw new SessionManagerError("SESSION_LIMIT");
+    }
+    this.#startingSessions += 1;
+  }
+
   #assertOpen(): void {
     if (this.#closed) {
       throw new SessionManagerError("MANAGER_CLOSED");
@@ -456,5 +474,7 @@ function sessionErrorMessage(code: SessionManagerErrorCode): string {
       return "agy session manager is closed";
     case "SESSION_BUSY":
       return "agy session already has a pending prompt";
+    case "SESSION_LIMIT":
+      return "agy session limit reached";
   }
 }

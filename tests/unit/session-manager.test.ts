@@ -16,6 +16,7 @@ import type { AgyControllerFactory } from "../../src/session-manager.js";
 const LIMITS: RuntimeLimits = {
   maxLineBytes: 1_024,
   maxStderrBytes: 1_024,
+  maxSessions: 16,
   initTimeoutMs: 100,
   promptTimeoutMs: 1_000,
   cancelGraceMs: 50,
@@ -370,6 +371,36 @@ describe("SessionManager lifecycle races", () => {
     await expect(second).rejects.toMatchObject({ code: "SESSION_EXISTS" });
     expect(calls).toBe(1);
     expect(secondController.closeCount).toBe(0);
+    await manager.closeAll();
+  });
+});
+
+describe("SessionManager admission", () => {
+  it("counts starting sessions and releases capacity after close", async () => {
+    const starts: Array<Deferred<ManagedAgyProcess>> = [];
+    const manager = new SessionManager(
+      { limits: { ...LIMITS, maxSessions: 1 } },
+      () => {
+        const start = deferred<ManagedAgyProcess>();
+        starts.push(start);
+        return start.promise;
+      },
+    );
+
+    const first = manager.createSession({ cwd: "/first" });
+    await expect(manager.createSession({ cwd: "/second" })).rejects.toMatchObject({
+      code: "SESSION_LIMIT",
+    });
+    expect(starts).toHaveLength(1);
+
+    starts[0]?.resolve(new FakeController("session-1"));
+    await expect(first).resolves.toBe("session-1");
+    await manager.closeSession("session-1");
+
+    const next = manager.createSession({ cwd: "/next" });
+    expect(starts).toHaveLength(2);
+    starts[1]?.resolve(new FakeController("session-2"));
+    await expect(next).resolves.toBe("session-2");
     await manager.closeAll();
   });
 });

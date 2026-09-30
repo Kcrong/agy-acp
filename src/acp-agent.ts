@@ -8,6 +8,7 @@ import {
 } from "@agentclientprotocol/sdk";
 
 import type { AgyResultEvent } from "./agy-events.js";
+import { AgyProcessConfigError } from "./agy-process.js";
 import {
   AgyProcessControllerError,
   type AgyEventListener,
@@ -95,9 +96,18 @@ export function createAgyAgent(service: AgySessionService): AgentApp {
         }
       }
     })
-    .onRequest(methods.agent.session.prompt, async ({ params, client }) => {
+    .onRequest(
+      methods.agent.session.prompt,
+      async ({ params, client, signal }) => {
       const input = promptToAgyInput(params.prompt);
       let sentText = false;
+      const cancelForAbort = (): void => {
+        void service.cancel(params.sessionId).catch(() => undefined);
+      };
+      signal.addEventListener("abort", cancelForAbort, { once: true });
+      if (signal.aborted) {
+        cancelForAbort();
+      }
 
       try {
         const result = await service.prompt(
@@ -140,11 +150,11 @@ export function createAgyAgent(service: AgySessionService): AgentApp {
         if (result.status === "SUCCESS") {
           return { stopReason: "end_turn" };
         }
-        if (result.error?.toLowerCase().includes("context canceled") === true) {
-          return { stopReason: "cancelled" };
-        }
         throw RequestError.internalError(undefined, "agy execution failed");
       } catch (error) {
+        if (signal.aborted) {
+          throw RequestError.requestCancelled();
+        }
         if (
           error instanceof AgyProcessControllerError &&
           error.code === "CANCELLED"
@@ -152,8 +162,11 @@ export function createAgyAgent(service: AgySessionService): AgentApp {
           return { stopReason: "cancelled" };
         }
         throw toRequestError(error);
+      } finally {
+        signal.removeEventListener("abort", cancelForAbort);
       }
-    });
+      },
+    );
 }
 
 export function promptToAgyInput(
@@ -242,8 +255,22 @@ function toRequestError(error: unknown): RequestError {
   if (error instanceof RequestError) {
     return error;
   }
-  if (error instanceof SessionManagerError) {
+  if (error instanceof AgyProcessConfigError) {
     return RequestError.invalidParams(undefined, error.message);
+  }
+  if (error instanceof SessionManagerError) {
+    switch (error.code) {
+      case "UNKNOWN_SESSION":
+      case "SESSION_EXISTS":
+      case "INVALID_SESSION":
+      case "SESSION_BUSY":
+        return RequestError.invalidParams(undefined, error.message);
+      case "SESSION_LIMIT":
+        return new RequestError(-32000, error.message);
+      case "SESSION_ID_MISMATCH":
+      case "MANAGER_CLOSED":
+        return RequestError.internalError(undefined, error.message);
+    }
   }
   if (error instanceof AgyProcessControllerError) {
     return RequestError.internalError(undefined, error.message);

@@ -111,6 +111,7 @@ Prompt input supports ACP Text and ResourceLink blocks. Image, audio, embedded r
 | `AGY_ACP_AGY_PATH` | `agy` | Antigravity executable name or path |
 | `AGY_ACP_MAX_LINE_BYTES` | `4194304` | Maximum ACP/NDJSON line size |
 | `AGY_ACP_MAX_STDERR_BYTES` | `65536` | Maximum retained diagnostic bytes per process |
+| `AGY_ACP_MAX_SESSIONS` | `16` | Maximum active plus starting sessions |
 | `AGY_ACP_INIT_TIMEOUT_MS` | `15000` | Child initialization timeout |
 | `AGY_ACP_PROMPT_TIMEOUT_MS` | `1800000` | Prompt timeout |
 | `AGY_ACP_CANCEL_GRACE_MS` | `5000` | Grace period before hard termination |
