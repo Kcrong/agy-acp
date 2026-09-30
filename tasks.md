@@ -6,7 +6,7 @@
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: README 설치·ACP client 설정·호환성·troubleshooting, package metadata/license, CONTRIBUTING·SECURITY, multi-OS GitHub Actions를 작성합니다.
+- 다음 작업: package tarball을 session scratch clean project에 설치해 executable smoke를 수행하고, repository/package secret·machine-path scan 후 draft PR을 갱신해 hosted Actions quota 상태를 확인합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -68,6 +68,11 @@
 - [x] 최초 real smoke에서 `SUCCESS` result의 `error` key 생략을 발견해 parser가 `null`로 normalize하도록 regression을 추가했습니다.
 - [x] 실제 `agy 1.2.14` ACP initialize→new→prompt→close smoke 1/1 통과, CLI와 child 정상 종료, 응답 hash 일치.
 - [x] Real regression 반영 후 `npm run check`: unit 50/50, mock E2E 7/7, lint, typecheck, build 통과. Real smoke는 opt-in으로 별도 1/1 통과.
+- [x] Unscoped npm `agy-acp@0.5.2`가 다른 repository 소유임을 확인하고 package를 `@kcrong/agy-acp@0.1.0`으로 scope했습니다. Executable 이름은 `agy-acp`를 유지합니다.
+- [x] Apache-2.0 공식 원문, README, CONTRIBUTING, SECURITY, repository links, semantic version, `private:true` accidental-publish guard를 구성했습니다.
+- [x] `npm pack --dry-run --ignore-scripts` 결과가 LICENSE, README, compiled JS/declarations, package.json만 포함하고 source map·tests·tasks·roadmap·환경 파일을 제외함을 확인했습니다.
+- [x] checkout v7.0.1과 setup-node v7.0.0의 tag commit SHA를 pin한 Node 22/24·Linux/macOS/Windows CI를 작성하고 YAML parsing을 통과했습니다.
+- [x] Public metadata 반영 후 `npm run check`: unit 50/50, mock E2E 7/7, lint, typecheck, build 통과.
 
 ## 진행 중
 
@@ -85,7 +90,8 @@
 - [x] stdio CLI와 fake-agy normal E2E
 - [x] failure·cancel·concurrent E2E matrix
 - [x] 실제 agy ACP smoke
-- [ ] 공개 배포 문서·metadata·CI
+- [x] 공개 배포 문서·metadata·CI
+- [ ] clean package install·scan·hosted CI
 
 ## 대기
 

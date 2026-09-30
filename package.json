@@ -1,10 +1,28 @@
 {
-  "name": "agy-acp",
-  "version": "0.0.0-development",
-  "description": "ACP adapter for the Antigravity CLI",
+  "name": "@kcrong/agy-acp",
+  "version": "0.1.0",
+  "description": "ACP v1 adapter for the Google Antigravity CLI",
   "type": "module",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kcrong/agy-acp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Kcrong/agy-acp/issues"
+  },
+  "homepage": "https://github.com/Kcrong/agy-acp#readme",
+  "keywords": [
+    "acp",
+    "agent-client-protocol",
+    "antigravity",
+    "coding-agent"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22.13.0"
   },
@@ -19,7 +37,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -28,7 +48,9 @@
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "vitest run --config vitest.config.ts",
     "test:e2e": "npm run build && vitest run --config vitest.e2e.config.ts",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build"
+    "check:unit": "npm run lint && npm run typecheck && npm run test:unit && npm run build",
+    "check": "npm run check:unit && npm run test:e2e",
+    "prepack": "npm run check"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.5.1",

@@ -62,7 +62,7 @@ export function createAgyAgent(service: AgySessionService): AgentApp {
       },
       agentInfo: {
         name: "agy-acp",
-        version: "0.0.0-development",
+        version: "0.1.0",
       },
     }))
     .onRequest(methods.agent.session.new, async ({ params }) => {

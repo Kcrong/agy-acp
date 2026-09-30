@@ -101,7 +101,7 @@ describe("createAgyAgent", () => {
 
       expect(response).toMatchObject({
         protocolVersion: PROTOCOL_VERSION,
-        agentInfo: { name: "agy-acp", version: "0.0.0-development" },
+        agentInfo: { name: "agy-acp", version: "0.1.0" },
         agentCapabilities: {
           promptCapabilities: {},
         },
