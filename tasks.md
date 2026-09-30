@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: public-release readiness loop round 2 — metadata and policy hardening
+- 현재 단계: public-release readiness loop round 3 — PR #4 CI and merge gate
 - 작업 branch: `chore/public-release-readiness`
 - merged baseline: PR #2, `main` `343ded8`
 - repository state: PRIVATE. Public visibility 전환과 default-history replacement는 마지막 human-only gate입니다.
-- 다음 작업: review remediation을 focused 재검토하고 Critical·High 0이면 concise public-readiness PR을 생성합니다.
+- 다음 작업: PR #4 exact-head Actions allocation을 확인하고 final status-only diff를 검토한 뒤 merge gate를 판단합니다.
 - 완료 조건: secret·machine data scan clean, hosted multi-OS gate, independent public-readiness review, readiness PR merge, explicit visibility approval, post-public ruleset/security verification. npm publish는 별도 explicit release gate입니다.
 
 ## 조사 메모
@@ -209,7 +209,8 @@
 - [x] Low Actions policy: repository-level full commit SHA pinning을 enabled로 전환했습니다.
 - [x] Low community metadata: description·5 topics, Code of Conduct, CODEOWNERS, concise PR template, bug/feature forms, security routing을 추가하고 YAML/package exclusion을 검증했습니다.
 - [x] Low package gate: `prepack`에 full check + package smoke를 포함하고 outer npm dry-run inheritance regression을 수정했습니다.
-- [ ] Public-readiness metadata/docs/settings 변경을 구현·검증하고 concise PR로 제출합니다.
+- [x] Public-readiness metadata/docs/settings를 구현·검증하고 [PR #4](https://github.com/Kcrong/agy-acp/pull/4)를 concise English body로 생성했습니다.
+- [x] `06cf88b` focused re-review: Critical 0, High 0, Medium 0, Low 0 — PASS.
 - [ ] Hosted matrix, default-history replacement, visibility flip, npm publish의 외부/human gates를 순서대로 처리합니다.
 
 ## 반복 운영 규칙
