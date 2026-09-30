@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: feature history rewrite·full local gates PASS·exact-head final review 진행
+- 현재 단계: main rebase·full local gates PASS·exact-head final review 준비
 - 작업 branch: `feat/agy-acp-bridge`
 - ready PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: rewritten head `4952da9`를 독립 재검토한 뒤 PR을 merge합니다. `main`에 이미 포함된 root `21334d1` metadata는 feature-branch rewrite로 제거할 수 없으므로 public visibility 전 별도 default-history gate로 유지합니다.
+- 다음 작업: current rebased head를 독립 재검토한 뒤 PR을 merge합니다. `main`에 이미 포함된 root `21334d1` metadata는 feature-branch rewrite로 제거할 수 없으므로 public visibility 전 별도 default-history gate로 유지합니다.
 - 완료 조건: current code merge gate, local gate, 독립 리뷰, PR merge 완료. Public release gate는 별도로 추적합니다.
 
 ## 조사 메모
@@ -154,8 +154,9 @@
 - [x] Exact-head Actions run `36710939730`의 Ubuntu Node 22/24, macOS 22, Windows 22 모두 `runner_id=0`, steps `0`로 allocation 전 quota failure임을 확인했습니다.
 - [x] [PR #2](https://github.com/Kcrong/agy-acp/pull/2) 본문을 unit 94/94, mock E2E 8/8, package/real smoke, final review, exact-head hosted quota evidence로 갱신하고 ready로 전환했습니다.
 - [x] Feature history gate: explicit approval 후 `adfc153` author/committer를 GitHub noreply identity로 rewrite하고 old head `3ea09d1` lease로 feature branch만 force-update했습니다.
-- [x] Rewritten head `4952da9`에서 final tree 동일성, 37-commit order/message/date 보존, feature identity scan clean, full local gate, package smoke, real `agy` smoke를 재검증했습니다.
-- [ ] Rewritten exact head independent final review와 PR merge를 수행합니다.
+- [x] Rewritten pre-rebase head `4952da9`에서 final tree 동일성, 37-commit order/message/date 보존, feature identity scan clean을 확인했습니다.
+- [x] Updated `origin/main` `e849414` 위로 38개 feature commit을 rebase했습니다. Feature patch는 동일하고 inherited tree change는 `AGENTS.md`뿐이며, rebased head에서 unit 94/94, mock E2E 8/8, package smoke, real `agy` 1/1, lint, typecheck, build를 통과했습니다.
+- [ ] Rebased exact head independent final review와 PR merge를 수행합니다.
 - [ ] Public-only inherited-root gate: `main`의 root `21334d1` metadata는 public visibility 전에 별도 default-history rewrite 결정이 필요합니다.
 
 
@@ -177,7 +178,7 @@
 - [x] 실제 agy ACP smoke
 - [x] 공개 배포 문서·metadata·CI
 - [x] clean package install·content scan·hosted CI
-- [ ] Rewritten exact-head 독립 리뷰·PR merge
+- [ ] Rebased exact-head 독립 리뷰·PR merge
 
 ## 대기
 
