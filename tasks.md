@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: exact-head 독립 재리뷰
+- 현재 단계: 3차 리뷰 지적 수정 완료·final exact-head 재리뷰 준비
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
 - 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: 현재 변경을 commit/push한 exact head에서 runtime/protocol과 public-release 독립 재리뷰를 수행하고 Critical/High 0을 확인합니다.
+- 다음 작업: review remediation을 commit/push하고 successor exact head에서 focused runtime/public 재리뷰로 Critical/High 0과 Medium closure를 확인합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
 
 ## 조사 메모
@@ -76,7 +76,7 @@
 - [x] 실제 package tarball을 session scratch clean project에 설치하고 packaged `agy-acp` bin→fake child ACP smoke를 통과했습니다.
 - [x] Tracked files, patch history, installed package의 credential·machine-path content scan은 clean입니다.
 - [x] Hosted CI run 36696258541의 Linux/macOS/Windows 4개 job 모두 `runner_id=0`, steps `[]`로 runner allocation 전에 실패해 Actions 사용량 소진임을 확인했습니다.
-- [ ] Root commit `21334d1`의 author/committer metadata에 machine-specific identity가 있습니다. Public 전 history rewrite에는 명시적 승인이 필요합니다.
+- [ ] Root `21334d1`과 review tip `adfc153`의 author/committer metadata에 machine-specific identity가 있습니다. Public 전 coordinated history rewrite에는 명시적 승인이 필요합니다.
 
 ## 독립 리뷰 1차 결과
 
@@ -133,7 +133,16 @@
 - [x] Low: `SESSION_BUSY`/`SESSION_EXISTS`를 distinct `-320xx` server-state errors로 분류하고 partial streamed response는 검증된 final suffix만 전송하며 불일치는 fail-closed합니다.
 - [x] 설계 문서의 unknown-event logging, prompt-timeout configuration, Windows tree termination, final suffix 설명을 실제 구현과 일치시켰습니다.
 - [x] Remediation targeted 60/60, 전체 unit 89/89, mock E2E 8/8, lint, typecheck, build, packed clean-install/import/bin smoke, 실제 authenticated agy smoke 1/1 통과.
-- [ ] 현재 exact head runtime/protocol 및 public-release 독립 재리뷰.
+- [x] `adfc153` exact-head 3차 independent review를 수행했습니다.
+- Runtime/protocol 3차: Critical 0, High 0, Medium 2, Low 1 — merge PASS. Retirement 대기 cancel arbitration, non-zero exit/result arbitration, Windows detached test expectation을 지적했습니다.
+- Public-release 3차: current merge Critical 0, High 0, Medium 0, Low 1; publication-only High 1, Medium 3, Low 2. Security ID wording 외 code merge blocker는 없고 hosted matrix/history/release controls는 publication gates입니다.
+- [x] Retirement/startup await마다 cancellation을 closed state보다 우선하고 cancel→queued prompt→close race가 replacement child 없이 `CANCELLED`로 끝나도록 수정했습니다.
+- [x] Child exit code/signal을 보존해 event-listener drain 중 관측된 non-zero exit가 terminal SUCCESS보다 우선하도록 수정했습니다.
+- [x] Windows detached expectation을 platform-aware하게 만들고 taskkill asynchronous fallback 및 incompatible final response fail-closed tests를 강화했습니다.
+- [x] SECURITY의 ACP-required session ID와 diagnostics privacy를 구분하고 README에 upstream `agy` data-use/opt-out notice를 연결했습니다.
+- [x] Package smoke가 모든 OS에서 `npm exec --offline -- agy-acp`로 installed bin을 호출하며 CI Windows job에서도 clean package smoke를 실행하도록 확장했습니다.
+- [x] Post-review targeted 63/63, 전체 unit 92/92, mock E2E 8/8, lint, typecheck, build, packed clean-install/import/bin smoke, 실제 authenticated agy smoke 1/1 통과.
+- [ ] Successor exact head focused runtime/public independent re-review.
 
 
 ## 진행 중

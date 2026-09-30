@@ -146,7 +146,7 @@ The command-line `--agy-path` option takes precedence over `AGY_ACP_AGY_PATH`.
 - The `agy` executable is resolved to an absolute realpath before any client-provided working directory is accepted; relative path values are rejected.
 - Cancellation targets the detached POSIX process group or Windows process tree, then applies a bounded hard-kill deadline.
 - Conversation IDs, token usage, stderr contents, and prompt text are excluded from default diagnostics.
-- No telemetry or network service is added by the adapter. Network requests are made only by `agy` itself.
+- The adapter adds no telemetry or network service. Network requests are made only by `agy` itself. Upstream `agy` may collect interaction data under its own terms and provides an opt-out setting; review the [Antigravity CLI data-use notice](https://github.com/google-antigravity/antigravity-cli#terms-of-service--data-use).
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 

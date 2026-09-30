@@ -21,7 +21,7 @@ If private reporting is unavailable because the repository has not yet been made
 `agy-acp` launches the locally installed `agy` executable and inherits the caller environment so Antigravity can use its existing authentication. The adapter:
 
 - does not read credential files;
-- does not print environment values, prompt contents, conversation IDs, usage, or retained stderr;
+- does not print environment values, prompt contents, usage, or retained stderr; conversation IDs appear only in required ACP protocol fields and are excluded from logs, errors, and diagnostics;
 - does not invoke a shell for `agy`;
 - does not enable `--dangerously-skip-permissions`;
 - bounds protocol lines, diagnostics, initialization, prompts, cancellation, and shutdown;
