@@ -342,8 +342,10 @@ export class SessionManager {
     record: SessionRecord,
     signal?: AbortSignal,
   ): Promise<ManagedAgyProcess> {
+    throwIfCancelled(signal);
     if (record.retiring !== undefined) {
       await record.retiring;
+      throwIfCancelled(signal);
     }
     if (record.closed || this.#closed) {
       throw new SessionManagerError("MANAGER_CLOSED");
@@ -357,9 +359,12 @@ export class SessionManager {
         record.controller,
         record.controller.close(),
       );
+      throwIfCancelled(signal);
     }
     if (record.starting !== undefined) {
-      return record.starting;
+      const controller = await record.starting;
+      throwIfCancelled(signal);
+      return controller;
     }
 
     const starting = this.#trackStart(async () => {
@@ -385,6 +390,10 @@ export class SessionManager {
 
     try {
       const controller = await starting;
+      if (signal?.aborted === true) {
+        await controller.close();
+        throw new AgyProcessControllerError("CANCELLED");
+      }
       record.controller = controller;
       this.#watchFailure(record, controller);
       return controller;
@@ -508,6 +517,12 @@ export class SessionManager {
     }
 
     return invocation;
+  }
+}
+
+function throwIfCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted === true) {
+    throw new AgyProcessControllerError("CANCELLED");
   }
 }
 

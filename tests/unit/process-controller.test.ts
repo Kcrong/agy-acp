@@ -604,3 +604,31 @@ describe("AgyProcessController result barrier", () => {
     expect(fake.signals).toEqual(["SIGTERM"]);
   });
 });
+
+describe("AgyProcessController exit-result arbitration", () => {
+  it("rejects success when a non-zero exit is known before result acceptance", async () => {
+    const fake = createFakeProcess();
+    const controller = await startReady(fake);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let listenerStarted = false;
+    controller.onEvent(async (event) => {
+      if (event.kind === "result") {
+        listenerStarted = true;
+        await gate;
+      }
+    });
+
+    const turn = controller.runTurn({ event: "user" });
+    fake.stdout.write(resultLine());
+    await immediate();
+    expect(listenerStarted).toBe(true);
+    fake.emitExitOnly(7);
+    release();
+
+    await expect(turn).rejects.toMatchObject({ code: "PROCESS_EXITED" });
+    fake.emitClose(7);
+  });
+});

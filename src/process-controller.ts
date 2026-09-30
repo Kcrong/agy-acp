@@ -82,6 +82,8 @@ export class AgyProcessController implements ManagedAgyProcess {
   #eventQueue: Promise<void> = Promise.resolve();
   #stdoutEnded = false;
   #processExited = false;
+  #processExitCode: number | null | undefined;
+  #processExitSignal: NodeJS.Signals | null | undefined;
   #processClosed = false;
   #initTimer: NodeJS.Timeout | undefined;
   #activeTurn: ActiveTurn | undefined;
@@ -348,8 +350,13 @@ export class AgyProcessController implements ManagedAgyProcess {
     this.#fail(new AgyProcessControllerError("SPAWN_FAILED", error), false);
   };
 
-  readonly #handleExit = (): void => {
+  readonly #handleExit = (
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): void => {
     this.#processExited = true;
+    this.#processExitCode = code;
+    this.#processExitSignal = signal;
   };
 
   readonly #handleClose = (): void => {
@@ -450,6 +457,15 @@ export class AgyProcessController implements ManagedAgyProcess {
       } catch (error) {
         throw new AgyProcessControllerError("EVENT_HANDLER_FAILED", error);
       }
+    }
+
+    if (
+      event.kind === "result" &&
+      this.#processExited &&
+      (this.#processExitCode !== 0 || this.#processExitSignal !== null)
+    ) {
+      this.#fail(new AgyProcessControllerError("PROCESS_EXITED"), false);
+      return;
     }
 
     if (

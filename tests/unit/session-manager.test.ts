@@ -543,3 +543,33 @@ describe("SessionManager cancellation arbitration", () => {
     expect(manager.size).toBe(0);
   });
 });
+
+describe("SessionManager retirement cancellation precedence", () => {
+  it("returns cancellation when close aborts a prompt waiting for retirement", async () => {
+    const original = new DeferredController("session-1");
+    const controllers: FakeController[] = [];
+    const manager = new SessionManager({ limits: LIMITS }, (invocation) => {
+      const controller =
+        controllers.length === 0
+          ? original
+          : new FakeController(invocation.conversationId ?? "unexpected");
+      controllers.push(controller);
+      return Promise.resolve(controller);
+    });
+    const sessionId = await manager.createSession({ cwd: "/workspace" });
+    const firstPrompt = manager.prompt(sessionId, { event: "first" });
+    await Promise.resolve();
+
+    const cancelling = manager.cancel(sessionId);
+    await expect(firstPrompt).rejects.toMatchObject({ code: "CANCELLED" });
+    const queuedPrompt = manager.prompt(sessionId, { event: "queued" });
+    await Promise.resolve();
+    const closing = manager.closeSession(sessionId);
+
+    original.retirement.resolve();
+    await cancelling;
+    await expect(queuedPrompt).rejects.toMatchObject({ code: "CANCELLED" });
+    await closing;
+    expect(controllers).toHaveLength(1);
+  });
+});

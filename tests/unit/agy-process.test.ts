@@ -98,7 +98,7 @@ describe("spawnAgyProcess", () => {
         ],
         {
           cwd: "/workspace",
-          detached: true,
+          detached: process.platform !== "win32",
           env,
           shell: false,
           stdio: "pipe",
@@ -148,7 +148,7 @@ describe("signalAgyProcessTree", () => {
     ]);
   });
 
-  it("falls back to the direct child when Windows tree termination fails", () => {
+  it("falls back to the direct child when Windows tree termination fails asynchronously", async () => {
     const directSignals: NodeJS.Signals[] = [];
     const child = {
       pid: 1234,
@@ -160,9 +160,12 @@ describe("signalAgyProcessTree", () => {
 
     signalAgyProcessTree(child, "SIGKILL", {
       platform: "win32",
-      signalWindowsTree: (_pid, _force, onFailure) => onFailure(),
+      signalWindowsTree: (_pid, _force, onFailure) =>
+        queueMicrotask(onFailure),
     });
 
+    expect(directSignals).toEqual([]);
+    await Promise.resolve();
     expect(directSignals).toEqual(["SIGKILL"]);
   });
 });

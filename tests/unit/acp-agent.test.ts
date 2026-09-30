@@ -477,4 +477,33 @@ describe("createAgyAgent streamed response reconciliation", () => {
 
     expect(updates).toEqual(["delta", "-tail"]);
   });
+
+  it("fails closed when the final response is incompatible with streamed text", async () => {
+    const service = new FakeSessionService();
+    service.promptResult = { ...successResult(), response: "different" };
+    const updates: string[] = [];
+    const app = createAgyAgent(service);
+    const testClient = client({ name: "test-client" }).onNotification(
+      methods.client.session.update,
+      ({ params }) => {
+        if (
+          params.update.sessionUpdate === "agent_message_chunk" &&
+          params.update.content.type === "text"
+        ) {
+          updates.push(params.update.content.text);
+        }
+      },
+    );
+
+    await testClient.connectWith(app, async (context) => {
+      await expect(
+        context.request(methods.agent.session.prompt, {
+          sessionId: "session-1",
+          prompt: [{ type: "text", text: "mismatch" }],
+        }),
+      ).rejects.toMatchObject({ code: -32603 });
+    });
+
+    expect(updates).toEqual(["delta"]);
+  });
 });
