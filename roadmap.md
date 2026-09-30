@@ -87,7 +87,7 @@
 - [x] GitHub 공식 문서에서 private→public 전환 시 code·Actions history/log 공개, private fork 분리, push ruleset 비활성화, public Advanced Security 활성화를 확인합니다.
 - [x] 전체 Git history, tracked files, package tarball, Actions logs·artifacts를 redacted/count-only 방식으로 검사했습니다. Critical·High secret finding 0이며 23 runs/92 jobs는 executed steps·logs·artifacts 0입니다.
 - [ ] Inherited root `21334d1`의 machine-derived identity를 제거할 default-history replacement 절차와 rollback ref를 준비하고 별도 explicit approval을 받습니다.
-- [ ] Public 전환 직후 disabled되는 default-branch ruleset을 복구하고 deletion, non-fast-forward, squash-only PR 보호가 active인지 확인합니다.
+- [ ] Public 전환 전에 default branch ruleset에 required hosted checks와 approving review 1개를 추가하고, 전환 후 deletion·non-fast-forward·squash-only PR 보호와 함께 active인지 재검증합니다. GitHub가 자동 disable하는 대상은 별도 push rulesets입니다.
 - [ ] Actions quota 복구 후 Linux Node 22/24, macOS Node 22, Windows Node 22 hosted matrix가 실제 runner에서 통과합니다.
 - [ ] Public repository community profile, `SECURITY.md`, license, contribution docs, issue settings와 package metadata를 독립 검토합니다.
 - [ ] Public-readiness 변경을 concise English PR로 제출하고 Critical·High finding 0과 local/package/real smoke를 확보한 뒤 merge합니다.

@@ -6,7 +6,7 @@
 - 작업 branch: `chore/public-release-readiness`
 - merged baseline: PR #2, `main` `343ded8`
 - repository state: PRIVATE. Public visibility 전환과 default-history replacement는 마지막 human-only gate입니다.
-- 다음 작업: hosted checks/approval을 public 전환 직후 복구할 exact ruleset update를 dry-run 검증하고, current safe changes를 concise PR로 제출합니다.
+- 다음 작업: current branch를 independent public/security review하고 Critical·High 0이면 concise public-readiness PR을 생성합니다.
 - 완료 조건: secret·machine data scan clean, hosted multi-OS gate, independent public-readiness review, readiness PR merge, explicit visibility approval, post-public ruleset/security verification. npm publish는 별도 explicit release gate입니다.
 
 ## 조사 메모
@@ -196,11 +196,13 @@
 - [x] Default ruleset `24235019`는 deletion/non-fast-forward 차단과 squash-only PR을 active enforcement로 적용합니다.
 - [x] Actions default token은 read-only이고 PR approval 권한이 없으며, repository workflow는 action commit SHA를 자체 pin합니다.
 - [x] Vulnerability alerts와 automated security fixes는 enabled입니다. Private vulnerability reporting은 public repository 대상이라 현재 endpoint가 404입니다.
-- [x] GitHub 공식 문서상 public 전환은 code와 Actions history/log를 공개하고 push rulesets를 disabled하므로, secret/log audit와 post-switch ruleset 복구가 필수입니다.
+- [x] GitHub 공식 문서상 public 전환은 code와 Actions history/log를 공개하고 별도 push rulesets를 disabled합니다. 현재 default 보호는 branch ruleset이므로 pre-switch 강화와 post-switch active 검증이 필요합니다.
 - [x] Package `@kcrong/agy-acp@0.1.0`은 Apache-2.0·public publish config이지만 `private:true` guard를 유지합니다.
 - [x] Independent public-exposure audit: 65 retained source revisions, 63 trees, 210 text blobs, 3 PRs, 23 Actions runs/92 jobs, simulated 24-file package를 count-only/redacted scan했습니다.
 - [x] Secret exposure Critical 0, High 0. Executed Actions steps·logs·artifacts는 모두 0이며 모든 jobs가 runner 미할당 상태입니다.
-- [ ] Medium: hosted CI를 실제 runner에서 통과시키고 default ruleset에 required checks와 approving review 1개를 추가합니다.
+- [ ] Medium: hosted CI를 실제 runner에서 통과시키고 default branch ruleset에 required checks와 approving review 1개를 추가합니다.
+- [x] Future ruleset payload를 4 hosted check contexts, approval 1, stale dismissal, last-push approval, thread resolution으로 dry-run 검증했습니다. CI green과 eligible reviewer 확보 전에는 적용하지 않습니다.
+- [x] Current branch full validation: unit 98/98, mock E2E 8/8, package smoke, real `agy` 1/1, lint, typecheck, build 통과.
 - [ ] Low: root/retained machine identity를 accept 또는 remediate 결정합니다.
 - [x] Low Actions policy: repository-level full commit SHA pinning을 enabled로 전환했습니다.
 - [x] Low community metadata: description·5 topics, Code of Conduct, CODEOWNERS, concise PR template, bug/feature forms, security routing을 추가하고 YAML/package exclusion을 검증했습니다.
