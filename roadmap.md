@@ -78,5 +78,5 @@
 - [ ] roadmap의 모든 항목에 검증 증거가 있고 `tasks.md`가 최종 상태를 반영합니다.
 - [x] 실제 `agy` smoke를 포함한 모든 local gate가 통과합니다.
 - [x] 독립 코드리뷰에서 Critical·High finding이 0입니다.
-- [x] Conventional Commits 형식의 영문 PR 제목과 지정된 한국어 본문으로 PR을 생성합니다.
+- [x] Conventional Commits 형식의 영문 PR 제목과 지정된 English 4-section 본문으로 PR을 생성합니다.
 - [ ] 리뷰 지적을 반영하고 최종 head를 재검증한 뒤 merge합니다.

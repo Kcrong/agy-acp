@@ -25,16 +25,16 @@ Dependencies must remain workspace-local and exactly pinned. Do not use `sudo` o
 
 4. Add unit tests and fake-process E2E coverage for behavioral changes.
 5. Run `npm run check` locally.
-6. Open a PR with an English Conventional Commit title and a concise Korean body using these sections:
+6. Open a PR with an English Conventional Commit title and a concise English body using these sections:
 
    ```markdown
-   ## 무엇을 위해
+   ## What for
 
-   ## 어떤 변경을
+   ## What changed
 
-   ## 왜
+   ## Why
 
-   ## 어떻게 테스트했는지
+   ## How tested
    ```
 
 7. Address review findings and re-run relevant tests before merge.
