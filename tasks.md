@@ -5,8 +5,13 @@
 - 현재 단계: 프로토콜 계약 확정
 - 작업 branch: `feat/agy-acp-bridge`
 - draft PR: #2 (`feat(acp): add antigravity ACP bridge`)
-- 다음 작업: 실제 `agy` stream-json 정상 응답을 안전한 최소 prompt로 수집하고 ACP v1 method 목록과 비교합니다.
+- 다음 작업: `--print=''`를 명시한 실제 `agy` stream-json 정상 응답 probe로 event 구조를 수집합니다.
 - 완료 조건: `roadmap.md`의 모든 checkbox 완료, local gate 통과, 독립 리뷰 완료, PR merge
+
+## 조사 메모
+
+- `--print`는 문자열 인자를 요구합니다. flag 뒤에 다른 flag를 두면 그 값을 prompt로 소비하고, bare `--print`는 parser 단계에서 거부됩니다.
+- 앞선 두 probe는 parser에서 종료되어 model 호출이나 자격 증명 접근이 발생하지 않았습니다.
 
 ## 완료한 작업
 
