@@ -2,12 +2,12 @@
 
 ## 상태
 
-- 현재 단계: rebased-head remediation·full local gates·focused review PASS, PR merge ready
-- 작업 branch: `feat/agy-acp-bridge`
-- ready PR: #2 (`feat(acp): add antigravity ACP bridge`)
-- 배포 전제: 향후 public repository와 npm package로 공개하며 다양한 사용자·OS의 clean install을 지원합니다.
-- 다음 작업: final status-only commit을 확인하고 reviewed PR head를 merge합니다. `main`에 이미 포함된 root `21334d1` metadata는 public visibility 전 별도 default-history gate로 유지합니다.
-- 완료 조건: current code merge gate, local gate, 독립 리뷰, PR merge 완료. Public release gate는 별도로 추적합니다.
+- 현재 단계: public-release readiness loop round 1 — private baseline audit
+- 작업 branch: `chore/public-release-readiness`
+- merged baseline: PR #2, `main` `343ded8`
+- repository state: PRIVATE. Public visibility 전환과 default-history replacement는 마지막 human-only gate입니다.
+- 다음 작업: full history/package/Actions evidence secret scan, community/security metadata와 ruleset recovery plan을 검증하고 필요한 변경을 concise PR로 제출합니다.
+- 완료 조건: secret·machine data scan clean, hosted multi-OS gate, independent public-readiness review, readiness PR merge, explicit visibility approval, post-public ruleset/security verification. npm publish는 별도 explicit release gate입니다.
 
 ## 조사 메모
 
@@ -189,6 +189,18 @@
 ## 대기
 
 - [ ] GitHub Actions 실행: 사용량이 복구될 때까지 실행 전 quota 실패는 허용하되 workflow는 작성합니다.
+
+## Public readiness loop
+
+- [x] Baseline `main` `343ded8`, repository visibility PRIVATE, ADMIN access, open PR 0을 확인했습니다.
+- [x] Default ruleset `24235019`는 deletion/non-fast-forward 차단과 squash-only PR을 active enforcement로 적용합니다.
+- [x] Actions default token은 read-only이고 PR approval 권한이 없으며, repository workflow는 action commit SHA를 자체 pin합니다.
+- [x] Vulnerability alerts와 automated security fixes는 enabled입니다. Private vulnerability reporting은 public repository 대상이라 현재 endpoint가 404입니다.
+- [x] GitHub 공식 문서상 public 전환은 code와 Actions history/log를 공개하고 push rulesets를 disabled하므로, secret/log audit와 post-switch ruleset 복구가 필수입니다.
+- [x] Package `@kcrong/agy-acp@0.1.0`은 Apache-2.0·public publish config이지만 `private:true` guard를 유지합니다.
+- [ ] Full history/package/Actions evidence를 redacted/count-only 방식으로 independent secret audit합니다.
+- [ ] Public-readiness metadata/docs/settings 변경을 구현·검증하고 concise PR로 제출합니다.
+- [ ] Hosted matrix, default-history replacement, visibility flip, npm publish의 외부/human gates를 순서대로 처리합니다.
 
 ## 반복 운영 규칙
 
