@@ -56,3 +56,46 @@ class InvalidEventError(AgyAcpError):
 
 class ProtocolEncodingError(AgyAcpError):
     """Raised when a protocol message cannot be encoded safely."""
+
+
+class ExecutableResolutionError(AgyAcpError):
+    """Raised when the configured backend executable is unsafe or unavailable."""
+
+
+class BackendProcessError(AgyAcpError):
+    """Base exception for backend process lifecycle failures."""
+
+
+class BackendStartError(BackendProcessError):
+    def __init__(self) -> None:
+        super().__init__("Backend could not start")
+
+
+class BackendProtocolError(BackendProcessError):
+    def __init__(self) -> None:
+        super().__init__("Backend produced invalid output")
+
+
+class BackendExitedError(BackendProcessError):
+    def __init__(self, *, before_initialization: bool = False) -> None:
+        message = (
+            "Backend exited before initialization"
+            if before_initialization
+            else "Backend exited unexpectedly"
+        )
+        super().__init__(message)
+
+
+class BackendTimeoutError(BackendProcessError):
+    def __init__(self) -> None:
+        super().__init__("Backend operation timed out")
+
+
+class BackendWriteError(BackendProcessError):
+    def __init__(self) -> None:
+        super().__init__("Backend input failed")
+
+
+class BackendShutdownError(BackendProcessError):
+    def __init__(self) -> None:
+        super().__init__("Backend shutdown timed out")
