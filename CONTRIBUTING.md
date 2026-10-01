@@ -10,15 +10,18 @@ uv sync --frozen --all-groups --python 3.14
 
 ## Validation
 
-Run the same local gates required by CI:
+Run the core local gates:
 
 ```bash
+uv lock --check
 uv run --frozen ruff format --check .
 uv run --frozen ruff check .
 uv run --frozen mypy
 uv run --frozen pytest
 uv build --no-build-isolation
 ```
+
+CI repeats these gates on every supported OS/Python combination and additionally verifies installation from the pushed exact Git revision.
 
 Add focused unit and end-to-end coverage for success, failure, cancellation, cleanup, and boundary behavior. Linux and macOS support must remain equivalent; do not add Windows support claims without a reviewed platform decision.
 
