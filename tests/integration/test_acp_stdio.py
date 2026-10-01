@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -10,6 +12,7 @@ from typing import Any, cast
 import pytest
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "fake_agy.py"
+MCP_FIXTURE = Path(__file__).parents[1] / "fixtures" / "fake_mcp_server.py"
 
 
 def create_wrapper(tmp_path: Path, mode: str, marker_root: Path | None = None) -> Path:
@@ -37,6 +40,7 @@ async def start_server(
     max_line_bytes: int | None = None,
     max_in_flight: int | None = None,
     marker_root: Path | None = None,
+    mcp_temp_parent: Path | None = None,
 ) -> asyncio.subprocess.Process:
     command = [
         sys.executable,
@@ -51,11 +55,16 @@ async def start_server(
         command.extend(("--max-line-bytes", str(max_line_bytes)))
     if max_in_flight is not None:
         command.extend(("--max-in-flight", str(max_in_flight)))
+    environment = None
+    if mcp_temp_parent is not None:
+        environment = dict(os.environ)
+        environment["TMPDIR"] = str(mcp_temp_parent)
     process = await asyncio.create_subprocess_exec(
         *command,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=environment,
     )
     assert process.stdin is not None
     assert process.stdout is not None
@@ -192,7 +201,7 @@ async def test_stdio_session_cancel_completes_prompt_as_cancelled(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_stdio_rejects_unknown_method_and_nonempty_mcp(tmp_path: Path) -> None:
+async def test_stdio_rejects_unknown_method_and_accepts_stdio_mcp(tmp_path: Path) -> None:
     process = await start_server(tmp_path, "normal")
     await initialize(process)
     await send(
@@ -217,6 +226,26 @@ async def test_stdio_rejects_unknown_method_and_nonempty_mcp(tmp_path: Path) -> 
                         "command": "/usr/bin/false",
                         "args": [],
                         "env": [],
+                    }
+                ],
+            },
+        },
+    )
+    assert (await receive(process))["result"] == {"sessionId": "fake-session"}
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "session/new",
+            "params": {
+                "cwd": str(tmp_path),
+                "mcpServers": [
+                    {
+                        "type": "sse",
+                        "name": "unsupported",
+                        "url": "https://invalid.example/mcp",
+                        "headers": [],
                     }
                 ],
             },
@@ -736,3 +765,79 @@ async def test_stdio_rejects_nul_session_ids_without_echo(tmp_path: Path) -> Non
         "error": {"code": -32601, "message": "Method not found"},
     }
     await stop_server(process)
+
+
+@pytest.mark.asyncio
+async def test_stdio_disconnect_cleans_active_mcp_generation_and_descendant(
+    tmp_path: Path,
+) -> None:
+    marker_root = tmp_path / "mcp-markers"
+    mcp_temp_parent = tmp_path / "mcp-temp"
+    marker_root.mkdir()
+    mcp_temp_parent.mkdir()
+    marker = marker_root / "server.json"
+    survivor = marker_root / "server-survived"
+    secret = "credential-sentinel"
+    process = await start_server(
+        tmp_path,
+        "mcp-hang",
+        marker_root=marker_root,
+        mcp_temp_parent=mcp_temp_parent,
+    )
+    await initialize(process)
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "session/new",
+            "params": {
+                "cwd": str(tmp_path),
+                "mcpServers": [
+                    {
+                        "name": "server",
+                        "command": str(Path(sys.executable).resolve()),
+                        "args": [
+                            "-u",
+                            str(MCP_FIXTURE),
+                            str(marker),
+                            "TOKEN",
+                            hashlib.sha256(secret.encode()).hexdigest(),
+                            "OTHER_TOKEN",
+                            hashlib.sha256(str(tmp_path.resolve()).encode()).hexdigest(),
+                            str(survivor),
+                        ],
+                        "env": [{"name": "TOKEN", "value": secret}],
+                    }
+                ],
+            },
+        },
+    )
+    session_id = str((await receive(process))["result"]["sessionId"])
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "session/prompt",
+            "params": {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "start"}],
+            },
+        },
+    )
+    assert (await receive(process))["method"] == "session/update"
+    assert marker.exists()
+    assert list(mcp_temp_parent.glob("agy-acp-mcp-owner-*/generation-*"))
+
+    assert process.stdin is not None
+    process.stdin.close()
+    await process.stdin.wait_closed()
+    async with asyncio.timeout(8):
+        assert await process.wait() == 0
+    await asyncio.sleep(1.3)
+
+    assert not survivor.exists()
+    assert not list(mcp_temp_parent.iterdir())
+    assert process.stderr is not None
+    assert await process.stderr.read() == b""

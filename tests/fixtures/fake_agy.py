@@ -10,7 +10,7 @@ from pathlib import Path
 
 MODE = sys.argv[1]
 MARKER_ROOT = Path(sys.argv[2]) if len(sys.argv) > 2 and Path(sys.argv[2]).is_absolute() else None
-CONVERSATION_ID = f"fake-{Path.cwd().name}" if MODE == "unique" else "fake-session"
+CONVERSATION_ID = f"fake-{Path.cwd().name}" if MODE in {"unique", "mcp-unique"} else "fake-session"
 INIT_CONVERSATION_ID = "fake\x00session" if MODE == "nul-conversation" else CONVERSATION_ID
 INIT_CWD = "safe\x00cwd" if MODE == "nul-cwd" else os.getcwd()
 
@@ -50,6 +50,55 @@ def result(
             "usage": {},
         },
     }
+
+
+def start_mcp_servers() -> list[subprocess.Popen[bytes]]:
+    arguments = sys.argv[3:]
+    additional_directories = [
+        Path(arguments[index + 1])
+        for index, argument in enumerate(arguments[:-1])
+        if argument == "--add-dir"
+    ]
+    if not additional_directories:
+        raise RuntimeError
+    if MARKER_ROOT is not None:
+        (MARKER_ROOT / "mcp-add-dirs.json").write_text(
+            json.dumps([str(path) for path in additional_directories], separators=(",", ":")),
+            encoding="utf-8",
+        )
+    config = json.loads(
+        (additional_directories[-1] / ".agents" / "mcp_config.json").read_text(encoding="utf-8")
+    )
+    processes: list[subprocess.Popen[bytes]] = []
+    for server in config["mcpServers"].values():
+        process = subprocess.Popen(
+            [server["command"], *server["args"]],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        if process.stdin is None or process.stdout is None:
+            raise RuntimeError
+        processes.append(process)
+        for request in (
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "fake-agy", "version": "1"},
+                },
+            },
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+        ):
+            process.stdin.write((json.dumps(request, separators=(",", ":")) + "\n").encode())
+            process.stdin.flush()
+            response = process.stdout.readline()
+            if not response or json.loads(response).get("id") != request["id"]:
+                raise RuntimeError
+    return processes
 
 
 if MODE == "no-init":
@@ -155,10 +204,17 @@ if MODE == "no-read":
 if MODE == "pre-result":
     emit(result())
 
+mcp_processes: list[subprocess.Popen[bytes]] = []
+
 for line in sys.stdin:
     payload = json.loads(line)
     if payload.get("event") != "user":
         continue
+    if MODE in {"mcp", "mcp-hang", "mcp-unique"} and not mcp_processes:
+        try:
+            mcp_processes = start_mcp_servers()
+        except (KeyError, OSError, RuntimeError, TypeError, ValueError):
+            raise SystemExit(18) from None
     if MODE == "flood":
         for index in range(100):
             emit(
@@ -221,7 +277,13 @@ for line in sys.stdin:
             },
         }
     )
-    if MODE in {"hang", "ignore-term", "descendant", "session-descendant"}:
+    if MODE in {
+        "hang",
+        "ignore-term",
+        "descendant",
+        "session-descendant",
+        "mcp-hang",
+    }:
         time.sleep(30)
         continue
     if MODE == "conflict":

@@ -126,3 +126,58 @@ def test_bare_command_never_searches_current_directory(
 
     with pytest.raises(ExecutableResolutionError, match="could not be resolved"):
         resolve_executable(name, path=str(empty_path))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        [("NAME", "value")],
+        ("not-a-pair",),
+        (("", "value"),),
+        (("A=B", "value"),),
+        (("NUL\x00NAME", "value"),),
+        (("NAME", "value\x00tail"),),
+        (("NAME", "first"), ("NAME", "second")),
+        (("NAME", b"bytes"),),
+    ],
+)
+def test_process_config_rejects_invalid_environment_overrides_without_echo(
+    tmp_path: Path,
+    overrides: object,
+) -> None:
+    with pytest.raises(ValueError, match="environment") as raised:
+        AgyProcessConfig(
+            command=AgyCommand(Path(sys.executable).resolve()),
+            cwd=tmp_path,
+            environment_overrides=overrides,  # type: ignore[arg-type]
+        )
+    assert "value" not in str(raised.value)
+
+
+def test_process_config_bounds_and_redacts_environment_ownership(tmp_path: Path) -> None:
+    secret = "credential-sentinel"
+
+    def callback() -> None:
+        return None
+
+    config = AgyProcessConfig(
+        command=AgyCommand(Path(sys.executable).resolve()),
+        cwd=tmp_path,
+        environment_overrides=(("TOKEN", secret),),
+        shutdown_callback=callback,
+    )
+
+    assert secret not in repr(config)
+    assert repr(callback) not in repr(config)
+    with pytest.raises(ValueError, match="byte limit"):
+        AgyProcessConfig(
+            command=AgyCommand(Path(sys.executable).resolve()),
+            cwd=tmp_path,
+            environment_overrides=(("TOKEN", "x" * (1024 * 1024)),),
+        )
+    with pytest.raises(ValueError, match="must be callable"):
+        AgyProcessConfig(
+            command=AgyCommand(Path(sys.executable).resolve()),
+            cwd=tmp_path,
+            shutdown_callback="credential-sentinel",  # type: ignore[arg-type]
+        )

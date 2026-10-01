@@ -11,6 +11,8 @@ from agy_acp.config import AgyProcessConfig
 from agy_acp.errors import (
     BackendExitedError,
     BackendProtocolError,
+    BackendShutdownError,
+    BackendStartError,
     BackendTimeoutError,
     BackendWriteError,
     ProtocolEncodingError,
@@ -390,3 +392,77 @@ async def test_launch_exposes_process_before_initialization_wait(tmp_path: Path)
 
     assert len(started) == 1
     assert started[0].closed
+
+
+@pytest.mark.asyncio
+async def test_shutdown_callback_failure_is_fixed_retryable_and_once_only(
+    tmp_path: Path,
+) -> None:
+    attempts: list[None] = []
+
+    def cleanup() -> None:
+        attempts.append(None)
+        if len(attempts) == 1:
+            raise RuntimeError("credential-sentinel")
+
+    def cleanup_attempts() -> int:
+        return len(attempts)
+
+    process_config = config(tmp_path, "normal")
+    process_config = AgyProcessConfig(
+        command=process_config.command,
+        cwd=process_config.cwd,
+        additional_directories=process_config.additional_directories,
+        conversation_id=process_config.conversation_id,
+        shutdown_callback=cleanup,
+        max_line_bytes=process_config.max_line_bytes,
+        max_stderr_bytes=process_config.max_stderr_bytes,
+        max_pending_events=process_config.max_pending_events,
+        init_timeout=process_config.init_timeout,
+        write_timeout=process_config.write_timeout,
+        cancel_grace=process_config.cancel_grace,
+        kill_grace=process_config.kill_grace,
+    )
+    process = await AgyProcess.launch(process_config)
+
+    def process_is_closed() -> bool:
+        return process.closed
+
+    with pytest.raises(BackendShutdownError, match="shutdown failed") as raised:
+        await process.close()
+    assert "credential-sentinel" not in str(raised.value)
+    assert not process_is_closed()
+    assert cleanup_attempts() == 1
+
+    await process.close()
+    assert process_is_closed()
+    await process.close()
+    assert cleanup_attempts() == 2
+
+
+@pytest.mark.asyncio
+async def test_pre_spawn_failure_runs_shutdown_callback(tmp_path: Path) -> None:
+    attempts = 0
+
+    def cleanup() -> None:
+        nonlocal attempts
+        attempts += 1
+
+    process_config = config(tmp_path, "normal")
+    process_config = AgyProcessConfig(
+        command=process_config.command,
+        cwd=process_config.cwd,
+        additional_directories=(Path("/safe\x00tail"),),
+        shutdown_callback=cleanup,
+        max_line_bytes=process_config.max_line_bytes,
+        max_stderr_bytes=process_config.max_stderr_bytes,
+        max_pending_events=process_config.max_pending_events,
+        init_timeout=process_config.init_timeout,
+        write_timeout=process_config.write_timeout,
+        cancel_grace=process_config.cancel_grace,
+        kill_grace=process_config.kill_grace,
+    )
+
+    with pytest.raises(BackendStartError, match="could not start"):
+        await AgyProcess.launch(process_config)
+    assert attempts == 1

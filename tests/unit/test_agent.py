@@ -28,6 +28,7 @@ def agent_config(
     max_pending_events: int = 8,
     kill_grace: float = 1,
     marker_root: Path | None = None,
+    mcp_temp_parent: Path | None = None,
 ) -> AgentConfig:
     prefix_args: tuple[str, ...] = ("-u", str(FIXTURE), mode)
     if marker_root is not None:
@@ -37,6 +38,7 @@ def agent_config(
             Path(sys.executable).resolve(),
             prefix_args,
         ),
+        mcp_temp_parent=mcp_temp_parent,
         max_line_bytes=4096,
         max_stderr_bytes=64,
         max_pending_events=max_pending_events,
@@ -144,23 +146,61 @@ async def test_new_session_and_prompt_stream_one_message(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_nonempty_mcp_is_a_disclosed_release_blocker(tmp_path: Path) -> None:
+async def test_nonempty_stdio_mcp_is_accepted_and_initial_generation_is_cleaned(
+    tmp_path: Path,
+) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    mcp_temp_parent = tmp_path / "mcp-temp"
+    mcp_temp_parent.mkdir()
+    agent = AgyAgent(
+        agent_config(tmp_path, "normal", mcp_temp_parent=mcp_temp_parent),
+        send_update,
+    )
+    session = await agent.new_session(
+        cwd=str(tmp_path),
+        mcp_servers=[
+            {
+                "name": "server",
+                "command": "/usr/bin/false",
+                "args": [],
+                "env": [],
+            }
+        ],
+    )
+
+    assert session.session_id == "fake-session"
+    owner_roots = list(mcp_temp_parent.glob("agy-acp-mcp-owner-*"))
+    assert len(owner_roots) == 1
+    assert not list(owner_roots[0].glob("generation-*"))
+    await agent.close()
+    assert not list(mcp_temp_parent.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_non_stdio_mcp_is_rejected_as_payload_free_invalid_params(
+    tmp_path: Path,
+) -> None:
     async def send_update(_session_id: str, _update: dict[str, object]) -> None:
         return None
 
     agent = AgyAgent(agent_config(tmp_path, "normal"), send_update)
-    with pytest.raises(AcpRequestError, match="Invalid params"):
+    secret = "credential-sentinel"
+    with pytest.raises(AcpRequestError, match="Invalid params") as raised:
         await agent.new_session(
             cwd=str(tmp_path),
             mcp_servers=[
                 {
+                    "type": "http",
                     "name": "server",
-                    "command": "/usr/bin/false",
-                    "args": [],
-                    "env": [],
+                    "url": f"https://invalid.example/{secret}",
+                    "headers": [],
                 }
             ],
         )
+    assert secret not in str(raised.value)
+    await agent.close()
 
 
 @pytest.mark.asyncio
