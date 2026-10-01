@@ -116,6 +116,12 @@ bounded NDJSON parser and ordered event consumer
 
 Every task, stream, timer, and process has one explicit owner and one bounded cleanup path.
 
+## Session load history gate
+
+`agy --conversation` preserves opaque conversation identity for later prompts, but the CLI does not expose the complete prior transcript needed by ACP `session/load`. A credential-safe `agy 1.2.14` resume probe sent EOF without a new prompt and observed only the structural `init` event: no history `step_update` or `result` events were emitted.
+
+Identity resumption is therefore used only for internal process-generation continuity. `session/load` remains unregistered and its capability remains false until an upstream interface supplies complete ordered history without exposing raw conversation data through logs or persistent adapter state.
+
 ## Stdio MCP handoff gate
 
 ACP v1 requires stdio MCP support. Official Antigravity documentation and a live `agy 1.2.14` scratch probe confirm that workspace `.agents/mcp_config.json` starts stdio MCP servers. The CLI exposes no per-invocation MCP configuration flag.

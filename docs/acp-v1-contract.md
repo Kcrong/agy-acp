@@ -53,9 +53,11 @@ The following surface is advertised only after its success, rejection, cancellat
 
 | Method or field | Upstream support | Activation condition |
 | --- | --- | --- |
-| `session/load` | `agy --conversation` | The conversation resumes and its complete prior history is replayed as ACP updates; resumption without history replay is insufficient. |
+| `session/load` | `agy --conversation` resumes identity but emits no prior history | Do not advertise until upstream exposes complete ordered history replay; resumption without replay is insufficient. |
 | `session/close` | Explicit adapter cleanup | The project dispatcher handles the stable method without enabling unrelated SDK unstable routes; active work is cancelled before all resources are released. |
 | `additionalDirectories` | Repeated `agy --add-dir` | Every path is absolute, ordered, and passed as a literal argument. |
+
+A credential-safe `agy 1.2.14 --conversation` probe resumed a known conversation with EOF and no new prompt. It emitted one `init` event, no `step_update` or `result` history events, no standard-error bytes, and exited successfully. The adapter therefore cannot reconstruct or replay complete prior history from the CLI surface and leaves `session/load` unregistered and unadvertised.
 
 ### Unsupported for the first implementation
 
