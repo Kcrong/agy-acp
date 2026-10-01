@@ -27,6 +27,12 @@ def test_console_entry_point_is_stable() -> None:
     assert project["scripts"] == {"agy-acp": "agy_acp.cli:main"}
 
 
+def test_build_backend_is_exact_and_available_without_isolation() -> None:
+    pyproject = load_project()
+    assert pyproject["build-system"]["requires"] == ["hatchling==1.32.4"]
+    assert "hatchling==1.32.4" in pyproject["dependency-groups"]["dev"]
+
+
 def test_local_planning_files_are_ignored() -> None:
     ignored = set((PROJECT_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines())
     assert {"north_star.md", "roadmap.md", "tasks.md"} <= ignored

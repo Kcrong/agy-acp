@@ -21,6 +21,7 @@ agy-acp = "agy_acp.cli:main"
 
 [dependency-groups]
 dev = [
+  "hatchling==1.32.4",
   "mypy==2.3.1",
   "pytest==9.1.1",
   "pytest-asyncio==1.4.0",
