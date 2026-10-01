@@ -56,3 +56,7 @@ jobs:
       - name: Test Git dependency install
         if: matrix.node == 24
         run: npm run test:git-install -- "git+file://${GITHUB_WORKSPACE}#${GITHUB_SHA}"
+
+      - name: Test package subprocess timeout cleanup
+        if: matrix.node == 24
+        run: npm run test:package-timeout

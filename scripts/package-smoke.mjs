@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 
 const REPOSITORY_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const NPM_STAGE_TIMEOUT_MS = 180_000;
 let currentStage = "setup";
 
 async function within(promise, stage, timeoutMs = 10_000) {
@@ -56,8 +57,8 @@ function run(command, args, options) {
   });
 }
 
-async function runNpm(args, cwd) {
-  const npmExecPath = process.env.npm_execpath;
+async function runNpm(args, cwd, options = {}) {
+  const npmExecPath = options.npmExecPath ?? process.env.npm_execpath;
   if (npmExecPath === undefined) {
     throw new Error("npm_execpath is required");
   }
@@ -68,6 +69,8 @@ async function runNpm(args, cwd) {
       NPM_CONFIG_DRY_RUN: "false",
       npm_config_dry_run: "false",
     },
+    timeout: options.timeoutMs ?? NPM_STAGE_TIMEOUT_MS,
+    killSignal: "SIGKILL",
   });
 }
 
@@ -205,6 +208,66 @@ async function verifyPackagedCli(consumerDirectory, packageRoot) {
   }
 }
 
+async function verifyTimeoutRegression() {
+  const temporaryBase =
+    process.env.KIROCREW_SCRATCH ?? process.env.RUNNER_TEMP ?? tmpdir();
+  await mkdir(temporaryBase, { recursive: true });
+  const workspace = await mkdtemp(join(temporaryBase, "agy-acp-timeout-"));
+  const npmShim = join(workspace, "hanging-npm.mjs");
+  let timeoutError;
+  let elapsedMs;
+
+  try {
+    await writeFile(npmShim, "setInterval(() => {}, 1_000);\n");
+    currentStage = "timeout-regression";
+    const startedAt = Date.now();
+    try {
+      await runNpm(["install"], workspace, {
+        npmExecPath: npmShim,
+        timeoutMs: 100,
+      });
+    } catch (error) {
+      timeoutError = error;
+    }
+    elapsedMs = Date.now() - startedAt;
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+
+  if (
+    timeoutError === undefined ||
+    typeof timeoutError !== "object" ||
+    timeoutError === null ||
+    timeoutError.killed !== true ||
+    typeof elapsedMs !== "number" ||
+    elapsedMs < 50 ||
+    elapsedMs > 5_000
+  ) {
+    throw new Error("Npm timeout was not enforced");
+  }
+
+  let workspaceRemoved = false;
+  try {
+    await access(workspace);
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      workspaceRemoved = true;
+    } else {
+      throw error;
+    }
+  }
+  if (!workspaceRemoved) {
+    throw new Error("Timeout scratch was not removed");
+  }
+
+  process.stdout.write("package-timeout-regression-ok\n");
+}
+
 async function main() {
   const temporaryBase =
     process.env.KIROCREW_SCRATCH ?? process.env.RUNNER_TEMP ?? tmpdir();
@@ -326,7 +389,11 @@ async function main() {
   }
 }
 
-void main().catch(() => {
+const entrypoint = process.argv.includes("--timeout-regression")
+  ? verifyTimeoutRegression
+  : main;
+
+void entrypoint().catch(() => {
   process.stderr.write(`package-smoke-failed:${currentStage}\n`);
   process.exitCode = 1;
 });

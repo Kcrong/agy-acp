@@ -51,6 +51,7 @@
     "test:e2e": "npm run build && vitest run --config vitest.e2e.config.ts",
     "test:package": "npm run build && node scripts/package-smoke.mjs",
     "test:git-install": "node scripts/package-smoke.mjs --git-install",
+    "test:package-timeout": "node scripts/package-smoke.mjs --timeout-regression",
     "check:unit": "npm run lint && npm run typecheck && npm run test:unit && npm run build",
     "check": "npm run check:unit && npm run test:e2e",
     "prepare": "npm run build",

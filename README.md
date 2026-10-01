@@ -175,7 +175,7 @@ To verify the GitHub dependency path against an accessible revision:
 npm run test:git-install -- 'github:Kcrong/agy-acp#main'
 ```
 
-The smoke test installs into session scratch, verifies the package import and CLI, and does not print Git credentials or resolved authentication data.
+The smoke test installs into session scratch, verifies the package import and CLI, and does not print Git credentials or resolved authentication data. Every npm or Git-backed install stage has a three-minute subprocess timeout. `npm run test:package-timeout` verifies timeout enforcement and scratch cleanup with a deliberately hanging fake npm process.
 
 See [Technology stack decision](docs/technology-stack.md) for why the adapter remains on Node.js and TypeScript and when a native rewrite should be reconsidered.
 
