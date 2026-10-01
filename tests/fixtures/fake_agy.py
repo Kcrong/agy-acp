@@ -9,8 +9,8 @@ import time
 from pathlib import Path
 
 MODE = sys.argv[1]
-MARKER_ROOT = Path(sys.argv[2]) if len(sys.argv) > 2 else None
-CONVERSATION_ID = "fake-session"
+MARKER_ROOT = Path(sys.argv[2]) if len(sys.argv) > 2 and Path(sys.argv[2]).is_absolute() else None
+CONVERSATION_ID = f"fake-{Path.cwd().name}" if MODE == "unique" else "fake-session"
 INIT_CONVERSATION_ID = "fake\x00session" if MODE == "nul-conversation" else CONVERSATION_ID
 
 
@@ -55,7 +55,14 @@ if MODE == "no-init":
     raise SystemExit(7)
 if MODE == "slow-init":
     time.sleep(30)
+if MODE == "slow-init-marker":
+    if MARKER_ROOT is None:
+        raise SystemExit(12)
+    (MARKER_ROOT / "initial-started").write_text("started", encoding="utf-8")
+    time.sleep(30)
 if MODE == "restart-slow-init" and "--conversation" in sys.argv[2:]:
+    if MARKER_ROOT is not None:
+        (MARKER_ROOT / "restart-started").write_text("started", encoding="utf-8")
     time.sleep(30)
 
 if MODE in {"ignore-term", "descendant", "idle-exit-descendant"}:
@@ -81,6 +88,18 @@ if MODE in {"descendant", "idle-exit-descendant"}:
             time.sleep(0.01)
         if not started.exists():
             raise SystemExit(10)
+
+if MODE == "record-args":
+    if MARKER_ROOT is None:
+        raise SystemExit(11)
+    arguments = sys.argv[3:]
+    additional_directories = [
+        arguments[index + 1]
+        for index, argument in enumerate(arguments[:-1])
+        if argument == "--add-dir"
+    ]
+    with (MARKER_ROOT / "argv.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(additional_directories, separators=(",", ":")) + "\n")
 
 emit(
     {

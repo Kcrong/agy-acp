@@ -5,6 +5,7 @@ import contextlib
 import math
 import os
 import signal
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -89,7 +90,12 @@ class AgyProcess:
         )
 
     @classmethod
-    async def launch(cls, config: AgyProcessConfig) -> AgyProcess:
+    async def launch(
+        cls,
+        config: AgyProcessConfig,
+        *,
+        on_started: Callable[[AgyProcess], None] | None = None,
+    ) -> AgyProcess:
         argv = build_agy_argv(
             config.command,
             conversation_id=config.conversation_id,
@@ -101,6 +107,8 @@ class AgyProcess:
             raise BackendStartError from None
         instance = cls(config, process)
         try:
+            if on_started is not None:
+                on_started(instance)
             event = await instance._receive(
                 timeout=config.init_timeout,
                 before_initialization=True,

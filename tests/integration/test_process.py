@@ -29,6 +29,7 @@ def config(
     max_line_bytes: int = 4096,
     max_pending_events: int = 8,
     write_timeout: float = 0.2,
+    init_timeout: float = 2,
 ) -> AgyProcessConfig:
     return AgyProcessConfig(
         command=AgyCommand(
@@ -39,7 +40,7 @@ def config(
         max_line_bytes=max_line_bytes,
         max_stderr_bytes=64,
         max_pending_events=max_pending_events,
-        init_timeout=2,
+        init_timeout=init_timeout,
         write_timeout=write_timeout,
         cancel_grace=0.15,
         kill_grace=2,
@@ -376,3 +377,17 @@ async def test_fault_cleanup_exception_is_observed_without_payload(tmp_path: Pat
     assert process.fault_cleanup_failed
     assert cleanup.done()
     await process.close()
+
+
+@pytest.mark.asyncio
+async def test_launch_exposes_process_before_initialization_wait(tmp_path: Path) -> None:
+    started: list[AgyProcess] = []
+
+    with pytest.raises(BackendTimeoutError, match="timed out"):
+        await AgyProcess.launch(
+            config(tmp_path, "slow-init", init_timeout=0.05),
+            on_started=started.append,
+        )
+
+    assert len(started) == 1
+    assert started[0].closed
