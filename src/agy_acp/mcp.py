@@ -14,9 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
-from agy_acp.errors import InvalidMcpConfigError, McpHandoffError
+from agy_acp.errors import ExecutableResolutionError, InvalidMcpConfigError, McpHandoffError
+from agy_acp.executable import resolve_executable
 
 MCP_ENV_PREFIX = "AGY_ACP_MCP_SPEC_"
+MCP_SCRUBBED_ENVIRONMENT = frozenset({"PYTHONHOME", "PYTHONPATH"})
 _OWNER_PREFIX = "agy-acp-mcp-owner-"
 _GENERATION_PREFIX = "generation-"
 _MAX_SERVERS = 16
@@ -133,6 +135,27 @@ def parse_mcp_servers(values: Sequence[object]) -> tuple[McpServerSpec, ...]:
     return tuple(specs)
 
 
+def resolve_mcp_servers(
+    specs: tuple[McpServerSpec, ...],
+) -> tuple[McpServerSpec, ...]:
+    resolved: list[McpServerSpec] = []
+    for spec in specs:
+        environment = dict(spec.env)
+        try:
+            command = resolve_executable(spec.command, path=environment.get("PATH"))
+        except ExecutableResolutionError:
+            _invalid()
+        resolved.append(
+            McpServerSpec(
+                name=spec.name,
+                command=str(command),
+                args=spec.args,
+                env=spec.env,
+            )
+        )
+    return tuple(resolved)
+
+
 def encode_launcher_spec(spec: McpServerSpec) -> str:
     return json.dumps(
         {
@@ -165,6 +188,8 @@ def decode_launcher_spec(raw: str) -> McpServerSpec:
     except (UnicodeError, ValueError, json.JSONDecodeError, _DuplicateKey):
         _invalid()
     parsed = parse_mcp_servers([value])
+    if not Path(parsed[0].command).is_absolute():
+        _invalid()
     return parsed[0]
 
 
@@ -182,20 +207,47 @@ class McpGeneration:
         self._closed = True
 
 
+def _safe_temp_parent(parent: Path) -> Path:
+    try:
+        resolved = parent.resolve(strict=True)
+        metadata = resolved.lstat()
+    except (OSError, RuntimeError):
+        raise McpHandoffError from None
+    mode = stat.S_IMODE(metadata.st_mode)
+    trusted_owner = metadata.st_uid in {0, os.getuid()}
+    private = mode & 0o022 == 0
+    sticky = bool(metadata.st_mode & stat.S_ISVTX)
+    if not resolved.is_absolute() or not stat.S_ISDIR(metadata.st_mode):
+        raise McpHandoffError
+    if not trusted_owner or (not private and not sticky):
+        raise McpHandoffError
+    return resolved
+
+
 class McpWorkspaceManager:
     def __init__(self, *, temp_parent: Path | None = None) -> None:
-        parent = Path(tempfile.gettempdir()) if temp_parent is None else temp_parent
-        if not parent.is_absolute() or not parent.is_dir():
-            raise McpHandoffError
-        self._parent = parent
+        requested_parent = Path(tempfile.gettempdir()) if temp_parent is None else temp_parent
+        self._parent = _safe_temp_parent(requested_parent)
         self._scavenge()
         self._lease_fd: int | None = None
         try:
-            self._root = Path(tempfile.mkdtemp(prefix=_OWNER_PREFIX, dir=parent))
+            self._root = Path(tempfile.mkdtemp(prefix=_OWNER_PREFIX, dir=self._parent))
             self._root.chmod(0o700)
             lease = self._root / ".lease"
             flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
             self._lease_fd = os.open(lease, flags, 0o600)
+            root_metadata = self._root.lstat()
+            lease_metadata = os.fstat(self._lease_fd)
+            if (
+                not stat.S_ISDIR(root_metadata.st_mode)
+                or root_metadata.st_uid != os.getuid()
+                or stat.S_IMODE(root_metadata.st_mode) != 0o700
+                or not stat.S_ISREG(lease_metadata.st_mode)
+                or lease_metadata.st_uid != os.getuid()
+                or stat.S_IMODE(lease_metadata.st_mode) != 0o600
+                or lease_metadata.st_nlink != 1
+            ):
+                raise ValueError
             fcntl.flock(self._lease_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except (OSError, ValueError):
             if self._lease_fd is not None:
@@ -220,22 +272,56 @@ class McpWorkspaceManager:
         except OSError:
             raise McpHandoffError from None
         for candidate in candidates:
+            candidate_fd: int | None = None
             lease_fd: int | None = None
             try:
-                metadata = candidate.lstat()
-                if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != os.getuid():
+                directory_flags = (
+                    os.O_RDONLY
+                    | getattr(os, "O_DIRECTORY", 0)
+                    | getattr(os, "O_NOFOLLOW", 0)
+                    | getattr(os, "O_NONBLOCK", 0)
+                )
+                candidate_fd = os.open(candidate, directory_flags)
+                candidate_metadata = os.fstat(candidate_fd)
+                path_metadata = candidate.lstat()
+                if (
+                    not stat.S_ISDIR(candidate_metadata.st_mode)
+                    or candidate_metadata.st_uid != os.getuid()
+                    or stat.S_IMODE(candidate_metadata.st_mode) != 0o700
+                    or (candidate_metadata.st_dev, candidate_metadata.st_ino)
+                    != (path_metadata.st_dev, path_metadata.st_ino)
+                ):
                     continue
                 lease_fd = os.open(
-                    candidate / ".lease",
-                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+                    ".lease",
+                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+                    dir_fd=candidate_fd,
                 )
+                lease_metadata = os.fstat(lease_fd)
+                if (
+                    not stat.S_ISREG(lease_metadata.st_mode)
+                    or lease_metadata.st_uid != os.getuid()
+                    or stat.S_IMODE(lease_metadata.st_mode) != 0o600
+                    or lease_metadata.st_nlink != 1
+                ):
+                    continue
                 fcntl.flock(lease_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                current_metadata = candidate.lstat()
+                if (current_metadata.st_dev, current_metadata.st_ino) != (
+                    candidate_metadata.st_dev,
+                    candidate_metadata.st_ino,
+                ):
+                    continue
                 shutil.rmtree(candidate)
-            except (BlockingIOError, FileNotFoundError, PermissionError, OSError):
+            except OSError:
                 continue
             finally:
                 if lease_fd is not None:
-                    os.close(lease_fd)
+                    with contextlib.suppress(OSError):
+                        os.close(lease_fd)
+                if candidate_fd is not None:
+                    with contextlib.suppress(OSError):
+                        os.close(candidate_fd)
 
     def prepare(self, specs: tuple[McpServerSpec, ...]) -> McpGeneration:
         if self._closed or not specs:
@@ -256,7 +342,7 @@ class McpWorkspaceManager:
                 slot = f"{nonce.upper()}_{index}"
                 servers[f"agy-acp-{nonce}-{index}"] = {
                     "command": launcher,
-                    "args": ["-m", "agy_acp.mcp_launcher", slot],
+                    "args": ["-I", "-m", "agy_acp.mcp_launcher", slot],
                 }
                 overrides.append((MCP_ENV_PREFIX + slot, encode_launcher_spec(spec)))
             config = agents / "mcp_config.json"

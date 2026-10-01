@@ -4,7 +4,11 @@ import os
 import sys
 
 from agy_acp.errors import InvalidMcpConfigError
-from agy_acp.mcp import MCP_ENV_PREFIX, decode_launcher_spec
+from agy_acp.mcp import (
+    MCP_ENV_PREFIX,
+    MCP_SCRUBBED_ENVIRONMENT,
+    decode_launcher_spec,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -17,7 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     environment = dict(os.environ)
     raw = environment.get(MCP_ENV_PREFIX + slot)
     for name in list(environment):
-        if name.startswith(MCP_ENV_PREFIX):
+        if name.startswith(MCP_ENV_PREFIX) or name in MCP_SCRUBBED_ENVIRONMENT:
             del environment[name]
     if raw is None:
         return 127
@@ -28,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     for name, value in spec.env:
         environment[name] = value
     try:
-        os.execvpe(
+        os.execve(
             spec.command,
             [spec.command, *spec.args],
             environment,

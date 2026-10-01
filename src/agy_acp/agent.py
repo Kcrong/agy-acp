@@ -42,7 +42,12 @@ from agy_acp.errors import (
 )
 from agy_acp.events import AgyEvent, AgyResultEvent, AgyResultStatus, AgyStepUpdateEvent
 from agy_acp.executable import AgyCommand
-from agy_acp.mcp import McpServerSpec, McpWorkspaceManager, parse_mcp_servers
+from agy_acp.mcp import (
+    McpServerSpec,
+    McpWorkspaceManager,
+    parse_mcp_servers,
+    resolve_mcp_servers,
+)
 from agy_acp.process import AgyProcess
 
 UpdateSender = Callable[[str, dict[str, object]], Awaitable[None]]
@@ -298,7 +303,7 @@ class AgyAgent:
         additional_directories: list[str] | None = None,
     ) -> NewSessionResponse:
         try:
-            parsed_mcp_servers = parse_mcp_servers(mcp_servers)
+            parsed_mcp_servers = resolve_mcp_servers(parse_mcp_servers(mcp_servers))
         except InvalidMcpConfigError:
             raise _invalid_params() from None
         additional_paths = _parse_additional_directories(additional_directories)

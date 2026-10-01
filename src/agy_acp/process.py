@@ -21,6 +21,7 @@ from agy_acp.errors import (
 )
 from agy_acp.events import AgyEvent, AgyInitEvent, AgyUnknownEvent, parse_agy_event
 from agy_acp.executable import build_agy_argv
+from agy_acp.mcp import MCP_ENV_PREFIX, MCP_SCRUBBED_ENVIRONMENT
 from agy_acp.ndjson import NdjsonParser
 from agy_acp.transport import encode_json_line
 
@@ -103,17 +104,42 @@ class AgyProcess:
                 conversation_id=config.conversation_id,
                 additional_directories=config.additional_directories,
             )
-            process = await cls._spawn(config, argv)
         except (OSError, RuntimeError, ValueError):
-            callback = config.shutdown_callback
-            if callback is not None:
-                with contextlib.suppress(Exception):
-                    callback()
+            cls._run_prestart_callback(config)
             raise BackendStartError from None
+        except BaseException:
+            cls._run_prestart_callback(config)
+            raise
+
+        spawn_task = asyncio.create_task(
+            cls._spawn(config, argv),
+            name="agy-acp.spawn",
+        )
+        cancelled = False
+        while True:
+            try:
+                process = await asyncio.shield(spawn_task)
+                break
+            except asyncio.CancelledError:
+                if spawn_task.cancelled():
+                    cls._run_prestart_callback(config)
+                    raise
+                cancelled = True
+            except (OSError, RuntimeError, ValueError):
+                cls._run_prestart_callback(config)
+                if cancelled:
+                    raise asyncio.CancelledError from None
+                raise BackendStartError from None
+            except BaseException:
+                cls._run_prestart_callback(config)
+                raise
+
         instance = cls(config, process)
         try:
             if on_started is not None:
                 on_started(instance)
+            if cancelled:
+                raise asyncio.CancelledError
             event = await instance._receive(
                 timeout=config.init_timeout,
                 before_initialization=True,
@@ -128,14 +154,26 @@ class AgyProcess:
             raise
 
     @staticmethod
+    def _run_prestart_callback(config: AgyProcessConfig) -> None:
+        callback = config.shutdown_callback
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            raise BackendShutdownError from None
+
+    @staticmethod
     async def _spawn(
         config: AgyProcessConfig,
         argv: tuple[str, ...],
     ) -> asyncio.subprocess.Process:
-        environment: dict[str, str] | None = None
-        if config.environment_overrides:
-            environment = dict(os.environ)
-            environment.update(config.environment_overrides)
+        environment = {
+            name: value
+            for name, value in os.environ.items()
+            if not name.startswith(MCP_ENV_PREFIX) and name not in MCP_SCRUBBED_ENVIRONMENT
+        }
+        environment.update(config.environment_overrides)
         return await asyncio.create_subprocess_exec(
             *argv,
             cwd=str(config.cwd),
