@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tracemalloc
 
 import pytest
 
@@ -40,11 +41,15 @@ def test_every_byte_split_preserves_utf8_record() -> None:
         assert records == [{"text": "한글🙂", "nested": {"value": 3}}]
 
 
-def test_crlf_is_accepted_without_changing_content() -> None:
-    parser = NdjsonParser(max_line_bytes=64)
+def test_crlf_delimiter_is_excluded_from_exact_payload_limit() -> None:
+    payload = b'{"value":"ok"}'
+    line = payload + b"\r\n"
 
-    assert parser.feed(encoded({"value": "ok"}, newline=b"\r\n")) == [{"value": "ok"}]
-    parser.finish()
+    for split in range(len(line) + 1):
+        parser = NdjsonParser(max_line_bytes=len(payload))
+        records = parser.feed(line[:split]) + parser.feed(line[split:])
+        parser.finish()
+        assert records == [{"value": "ok"}]
 
 
 def test_empty_chunk_is_a_noop() -> None:
@@ -126,9 +131,10 @@ def test_clean_finish_closes_parser() -> None:
         parser.feed(b"")
 
 
-def test_maximum_line_size_must_be_positive() -> None:
-    with pytest.raises(ValueError, match="positive"):
-        NdjsonParser(max_line_bytes=0)
+@pytest.mark.parametrize("limit", [0, True, 1.5, float("nan"), float("inf"), "64"])
+def test_maximum_line_size_must_be_positive_integer(limit: object) -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        NdjsonParser(max_line_bytes=limit)  # type: ignore[arg-type]
 
 
 def test_one_byte_feeds_preserve_multiple_records_and_crlf() -> None:
@@ -161,3 +167,62 @@ def test_excessive_json_nesting_is_a_fixed_parse_error() -> None:
 
     with pytest.raises(MalformedJsonError, match="Malformed JSON record"):
         parser.feed(record)
+
+
+def test_oversized_terminated_record_is_rejected_before_copying() -> None:
+    parser = NdjsonParser(max_line_bytes=64)
+    record = (b"x" * (1024 * 1024)) + b"\n"
+
+    tracemalloc.start()
+    try:
+        with pytest.raises(LineTooLongError):
+            parser.feed(record)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert peak < 256 * 1024
+
+
+@pytest.mark.parametrize("data", [bytearray(b"{}\n"), memoryview(b"{}\n"), "{}\n", None])
+def test_feed_requires_bytes_without_poisoning_parser(data: object) -> None:
+    parser = NdjsonParser(max_line_bytes=16)
+
+    with pytest.raises(TypeError, match="data must be bytes"):
+        parser.feed(data)  # type: ignore[arg-type]
+
+    assert parser.feed(b'{"ok":true}\n') == [{"ok": True}]
+    parser.finish()
+
+
+def _nested_objects(count: int, leaf: object = None) -> bytes:
+    value = leaf
+    for _ in range(count):
+        value = {"nested": value}
+    return encoded(value)
+
+
+def _nested_arrays_inside_object(count: int) -> bytes:
+    value: object = None
+    for _ in range(count):
+        value = [value]
+    return encoded({"nested": value})
+
+
+def test_sixty_four_containers_are_allowed() -> None:
+    for record in (_nested_objects(64), _nested_arrays_inside_object(63)):
+        parser = NdjsonParser(max_line_bytes=len(record))
+        assert len(parser.feed(record)) == 1
+        parser.finish()
+
+
+def test_sixty_five_containers_are_rejected_for_any_leaf() -> None:
+    records = (
+        _nested_objects(65),
+        _nested_objects(64, {}),
+        _nested_arrays_inside_object(64),
+    )
+    for record in records:
+        parser = NdjsonParser(max_line_bytes=len(record))
+        with pytest.raises(MalformedJsonError):
+            parser.feed(record)
