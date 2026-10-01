@@ -40,7 +40,7 @@ The adapter must follow these invariants:
 | Direction | Method | Adapter responsibility |
 | --- | --- | --- |
 | Client to agent request | `initialize` | Negotiate ACP v1 and advertise only verified capabilities. |
-| Client to agent request | `session/new` | Validate the workspace and create an isolated `agy` session. |
+| Client to agent request | `session/new` | Validate the workspace, connect every requested stdio MCP server, and create an isolated `agy` session. |
 | Client to agent request | `session/prompt` | Serialize supported content, run one turn, stream updates, and return one terminal stop reason. |
 | Client to agent notification | `session/cancel` | Cancel the active turn and return `cancelled` from the original prompt request. |
 | Agent to client notification | `session/update` | Stream ordered agent text chunks through the SDK connection. |
@@ -54,19 +54,35 @@ The following surface is advertised only after its success, rejection, cancellat
 | Method or field | Upstream support | Activation condition |
 | --- | --- | --- |
 | `session/load` | `agy --conversation` | The conversation resumes and its complete prior history is replayed as ACP updates; resumption without history replay is insufficient. |
-| `session/close` | Explicit adapter cleanup | Active work is cancelled and all resources are released before the response. |
+| `session/close` | Explicit adapter cleanup | The project dispatcher handles the stable method without enabling unrelated SDK unstable routes; active work is cancelled before all resources are released. |
 | `additionalDirectories` | Repeated `agy --add-dir` | Every path is absolute, ordered, and passed as a literal argument. |
 
 ### Unsupported for the first implementation
 
 - Authentication and provider methods
 - Session list, delete, fork, resume, modes, and configuration options
-- Client-provided MCP servers
+- HTTP and SSE MCP transports unless their capabilities are advertised
 - Client file, terminal, permission, and elicitation calls
 - Image, audio, and embedded resource prompt content
 - Experimental ACP v2 and unstable SDK features
 
 Unsupported methods are not registered or advertised. Unsupported input to a supported method returns a protocol error instead of being ignored.
+
+## MCP compatibility gate
+
+ACP v1 requires every agent to support client-provided stdio MCP servers. HTTP and SSE remain capability-gated.
+
+`agy 1.2.14` has no per-invocation MCP configuration flag. Official Antigravity documentation identifies `.agents/mcp_config.json` as the workspace configuration, and a credential-safe scratch probe confirmed that `agy 1.2.14` starts a stdio server from that file. Persisting an ACP client's server command or environment values into the user's workspace would expose secrets, race concurrent sessions, and mutate repository state.
+
+The implementation must therefore prove a process-scoped handoff that:
+
+- Connects every requested stdio server to the corresponding `agy` session
+- Does not persist client-provided commands, arguments, or environment values in the user's workspace or global configuration
+- Keeps concurrent sessions isolated
+- Restores no shared file and leaves no sensitive crash residue
+- Works on Linux, macOS, and Windows
+
+The project must not claim complete ACP v1 compatibility until this gate passes. If the current `agy` interface cannot provide a safe handoff, the limitation remains a release blocker rather than being hidden behind an empty-list-only implementation.
 
 ## Prompt content
 
@@ -83,14 +99,13 @@ Image, audio, and embedded resource blocks are rejected until their capabilities
 
 ## `agy` stream-json contract
 
-The current compatibility baseline is `agy 1.2.14`. A credential-safe live probe on 2026-10-01 verified these flags:
+The current compatibility baseline is `agy 1.2.14`. The adapter invocation baseline is:
 
-- `--input-format stream-json`
-- `--output-format stream-json`
-- `--print`
-- `--print-timeout`
-- `--conversation`
-- `--add-dir`
+```text
+agy --input-format stream-json --output-format stream-json --print-timeout 90s --print=
+```
+
+`--print` requires an explicit string value; the empty value selects stream mode without a standalone prompt. Session loading adds `--conversation <opaque-id>`, and additional directories add repeated `--add-dir <absolute-path>` arguments.
 
 The adapter writes one user event per prompt:
 
@@ -121,6 +136,19 @@ Only structural information was retained from the probe. Response text, conversa
 
 If the final response starts with the exact text already emitted as deltas, only the missing suffix is emitted. If no delta was emitted, the final response is emitted once. A conflicting final response fails closed rather than duplicating or replacing streamed content.
 
+### Event identity and ordering
+
+Known events are accepted only in the session phase where they are valid.
+
+- Exactly one `init` event must arrive before any known update or result.
+- The top-level `init.conversation_id` becomes the session's opaque backend identity.
+- Every `step_update.conversation_id` and `result.conversation_id` must match that identity.
+- A mismatched or missing identifier retires the process and fails the turn.
+- `step_update` is accepted only during initialization or an active prompt according to its documented state.
+- Exactly one terminal `result` is accepted for each prompt.
+- Duplicate or late `init`, update after terminal result, result without an active prompt, and multiple results fail closed.
+- Process exit and stdout EOF are not terminal success until queued event handling and the final response barrier complete.
+
 ## Session and process lifecycle
 
 - Each ACP session owns independent conversation metadata and an `agy` process lifecycle.
@@ -142,7 +170,28 @@ Cancellation is a terminal race with exactly one winner.
 5. Await a bounded cleanup barrier.
 6. Complete the original ACP prompt with `cancelled`.
 
-A prompt timeout uses the same shutdown path but returns a timeout error. Request-level `$/cancel_request`, session cancellation, timeout, process exit, and normal result must never complete the same prompt more than once.
+A prompt timeout uses the same shutdown path but returns a timeout error. Session cancellation returns a valid `PromptResponse` with `stopReason=cancelled`. Request-level `$/cancel_request` cancels the matching request task and returns error `-32800` for that request. Session cancellation, request cancellation, timeout, process exit, and normal result must never complete the same prompt more than once.
+
+## Error mapping
+
+Error messages are fixed sentences. Error data never contains raw parameters, Pydantic validation input, prompts, responses, conversation identifiers, environment values, or stderr.
+
+| Condition | Code | Message |
+| --- | ---: | --- |
+| Malformed JSON | `-32700` | `Parse error` |
+| Invalid JSON-RPC envelope or oversized ACP record | `-32600` | `Invalid request` |
+| Unregistered method | `-32601` | `Method not found` |
+| Invalid path, parameter, prompt block, MCP transport, or list item | `-32602` | `Invalid params` |
+| Request-level cancellation | `-32800` | `Request cancelled` |
+| Unexpected invariant or handler failure | `-32603` | `Internal error` |
+| `agy` cannot start or terminates without a valid result | `-32010` | `Backend unavailable` |
+| Initialization deadline | `-32011` | `Initialization timed out` |
+| Prompt deadline | `-32012` | `Prompt timed out` |
+| Overlapping prompt in one session | `-32013` | `Session busy` |
+| Session admission limit | `-32014` | `Session capacity exceeded` |
+| Unknown or closed session | `-32015` | `Session not found` |
+
+An `agy` structured execution error uses `-32010` with the same generic message unless a more specific adapter condition applies.
 
 ## Resource and security limits
 
@@ -173,13 +222,20 @@ Every listed row needs an automated test before the first release.
 
 | Area | Required cases |
 | --- | --- |
-| Initialization | Compatible version, incompatible version, truthful capabilities, init timeout, early exit |
-| Input | Text, resource link, empty prompt, unsupported block, non-empty MCP list, invalid paths |
-| Streaming | One delta, many deltas, split records, slow consumer, final suffix, conflicting final response |
-| Terminal outcomes | Success, structured error, malformed JSON, premature EOF, non-zero exit, unknown event |
-| Cancellation | Session cancel, request cancel, timeout, cancel/result race, cancel/exit race, ignored graceful signal |
-| Sessions | Capacity, concurrent sessions, duplicate prompt, idle restart, close during startup, disconnect cleanup |
+| ACP framing | Valid request and notification, malformed JSON, wrong `jsonrpc`, missing or invalid ID/method, embedded newline, oversized record, EOF remainder |
+| Dispatch | Baseline methods, unknown method, notification without response, stable `session/close`, unsupported optional methods |
+| Initialization | Compatible version, incompatible version, truthful capabilities, invalid capability input, init timeout, early exit |
+| MCP | Empty list, one and many stdio servers, invalid command/args/env item, per-session isolation, concurrent sessions, startup failure, HTTP/SSE rejection, no persisted secret values |
+| Prompt input | Text, resource link, mixed ordering, empty prompt, unsupported block, invalid paths, strict invalid-list rejection |
+| Streaming | One delta, many deltas, split records, slow consumer, final suffix, no-delta final response, conflicting final response, response barrier |
+| `agy` ordering | Duplicate/late init, update before init, missing/mismatched conversation ID, update outside active turn, duplicate/late result |
+| Terminal outcomes | Success, structured backend error, malformed `agy` JSON, premature stdout EOF, non-zero exit, unknown event, exit while events are queued |
+| Cancellation | Session cancel, request cancel with `-32800`, timeout, cancel/result race, cancel/exit race, ignored graceful signal, hard-kill barrier |
+| Sessions | Capacity, concurrent sessions, duplicate prompt, idle restart, startup retirement, disconnect cleanup, unknown session |
+| Conditional surface | Complete ordered load-history replay, load failure/cancel, close idle/active/starting/duplicate, additional-directory ordering and validation |
+| Errors and redaction | Every fixed code/message, invalid params containing sensitive sentinel values, internal exception, stderr exclusion, no raw Pydantic errors |
 | Platforms | Linux process group, macOS process group, Windows process tree |
 | Runtimes | Python 3.13 and Python 3.14 |
+| Compatibility kit | ACP Test Compatibility Kit plus adapter-specific regressions |
 
 The fake-`agy` end-to-end suite is the primary deterministic oracle. An opt-in real `agy` smoke test verifies event shape and a fixed response hash without printing sensitive values.

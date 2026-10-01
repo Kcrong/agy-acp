@@ -1,10 +1,10 @@
 # Python architecture decision
 
-**Status:** Accepted on 2026-10-01
+**Status:** Accepted on 2026-10-01 with the stdio MCP handoff as a release gate
 
 ## Decision
 
-Build `agy-acp` as a Python package using the official stable ACP Python SDK and the standard-library asynchronous process APIs. The package supports Python 3.13 and 3.14 on Linux, macOS, and Windows.
+Build `agy-acp` as a Python package using the official stable ACP Python SDK schema models and the standard-library asynchronous process APIs. A project-owned strict JSON-RPC boundary validates and redacts input before SDK model construction. The package supports Python 3.13 and 3.14 on Linux, macOS, and Windows.
 
 The implementation is a protocol and subprocess adapter. It does not implement a model provider, credential store, network service, or terminal UI.
 
@@ -16,7 +16,7 @@ The implementation is a protocol and subprocess adapter. It does not implement a
 | ACP SDK | `agent-client-protocol==0.12.1` | Latest stable release, official schema models and stdio JSON-RPC runtime, supports Python 3.10–3.14. |
 | Concurrency | Standard-library `asyncio` | The adapter is I/O-bound and needs explicit task, stream, timeout, and subprocess ownership. |
 | Data validation | SDK Pydantic models | Keeps wire objects aligned with the canonical ACP schema. |
-| Build backend | Hatchling `1.32.4` | Stable PEP 517 backend with direct Git installation support and a small project configuration. |
+| Build backend | Hatchling `1.32.4` | Stable PEP 517 backend with explicit `src` layout and compact project configuration; pip owns VCS fetching. |
 | Lock and environment | uv `0.12.21` | Reproducible universal lock, project-local environments, and cross-platform Python management. |
 | Lint and format | Ruff `0.16.9` | One stable tool for formatting, import order, and lint rules. |
 | Static typing | mypy `2.3.1` in strict mode | Stable Python-native checker; verified against the ACP SDK surface on Python 3.13 and 3.14. |
@@ -28,24 +28,22 @@ The SDK has `1.0.0rc2` available, but it is a prerelease. The stable `0.12.1` li
 
 ## SDK integration
 
-The adapter subclasses `acp.Agent` and is served by `acp.run_agent()` over stdio. The SDK provides:
+The adapter uses `acp.schema` models and stable helper builders, but it does not serve untrusted input through `acp.run_agent()` directly.
 
-- Generated Pydantic ACP v1 schema models
-- JSON-RPC framing and dispatch
-- Cross-platform ACP stdin/stdout plumbing
-- Async agent method interfaces
-- An agent-side connection for `session/update` notifications
+SDK `0.12.1` deliberately salvages invalid list items in fields such as `mcpServers` and `additionalDirectories`, and its default validation errors may include offending input. Its default router also treats stable ACP `session/close` as unstable and does not dispatch `$/cancel_request`. Those defaults conflict with this project's strict rejection, redaction, and cancellation contracts.
 
-The adapter remains responsible for:
+A project-owned `AcpStdioServer` therefore:
 
-- Capability policy
-- ACP content conversion
-- Session admission and ownership
-- `agy` executable resolution and invocation
-- NDJSON parsing and event validation
-- Backpressure and event ordering
-- Timeout and process-tree termination
-- Stable error mapping and redaction
+- Reads bounded UTF-8 newline-delimited JSON objects
+- Validates the JSON-RPC envelope and raw method parameters before constructing SDK models
+- Rejects invalid list items instead of silently dropping them
+- Tracks request IDs and implements `$/cancel_request`
+- Dispatches stable `session/close` without enabling unrelated unstable routes
+- Serializes successful SDK models with protocol aliases
+- Maps all failures to fixed, redacted JSON-RPC errors
+- Ensures stdout contains no non-protocol output
+
+The SDK remains authoritative for generated ACP v1 model shapes and output helpers. The project owns framing supervision, strict input validation, routing policy, and sanitized error serialization.
 
 Experimental SDK modules and ACP v2 are excluded.
 
@@ -57,9 +55,11 @@ uv.lock
 src/agy_acp/
   __init__.py
   cli.py
+  protocol.py
   agent.py
   sessions.py
   process.py
+  mcp.py
   events.py
   ndjson.py
   config.py
@@ -70,14 +70,14 @@ tests/
   fixtures/
 ```
 
-The public console entry point is:
+The public console entry point will be:
 
 ```toml
 [project.scripts]
 agy-acp = "agy_acp.cli:main"
 ```
 
-The repository root is a complete PEP 517 project. These flows must require no manual clone or build step:
+The completed repository root will be a complete PEP 517 project. These flows must require no manual clone or build step:
 
 ```bash
 pip install git+https://github.com/Kcrong/agy-acp.git
@@ -87,13 +87,15 @@ pip install git+https://github.com/Kcrong/agy-acp.git@<commit-sha>
 ## Process architecture
 
 ```text
-acp.run_agent
+AcpStdioServer ── strict JSON-RPC framing, routing, cancellation, redaction
     │
     ▼
-AgyAgent
+AgyAgent ── ACP request and response mapping
     │
     ▼
 SessionManager ── one active prompt per session
+    │
+    ├── McpHandoff ── isolated client-provided stdio servers
     │
     ▼
 AgyProcess ── one isolated agy lifecycle per session
@@ -104,13 +106,31 @@ bounded NDJSON parser and ordered event consumer
 
 ### Ownership rules
 
-- `AgyAgent` maps ACP methods and never owns subprocess details.
+- `AcpStdioServer` owns ACP input bounds, strict raw validation, request tasks, routing, and sanitized responses.
+- `AgyAgent` maps validated ACP methods and never owns subprocess details.
 - `SessionManager` owns admission, session identity, prompt serialization, restart, close, and disconnect cleanup.
+- `McpHandoff` owns per-session stdio MCP validation, process-scoped configuration, and cleanup.
 - `AgyProcess` owns one child process, stream tasks, timers, and process-tree termination.
 - The NDJSON parser has no process or protocol side effects.
 - Configuration is validated once before the agent begins reading ACP stdin.
 
 Every task, stream, timer, and process has one explicit owner and one bounded cleanup path.
+
+## Stdio MCP handoff gate
+
+ACP v1 requires stdio MCP support. Official Antigravity documentation and a live `agy 1.2.14` scratch probe confirm that workspace `.agents/mcp_config.json` starts stdio MCP servers. The CLI exposes no per-invocation MCP configuration flag.
+
+Writing client-provided commands or environment values into the user's workspace is not acceptable: those values may be secrets, concurrent sessions need different configurations, and a crash could leave sensitive repository state behind. `McpHandoff` must prove a process-scoped, crash-safe path before the adapter claims complete ACP v1 compatibility.
+
+The accepted handoff must:
+
+- Avoid persistent user-workspace and global-config mutation
+- Keep each session's server set and environment isolated
+- Preserve the requested ACP `cwd`
+- Clean up all generated state after normal exit, failure, cancellation, and host crash recovery
+- Work on Linux, macOS, and Windows
+
+If no safe handoff exists in the current `agy` interface, release remains blocked on an upstream process-scoped configuration mechanism. An empty-list-only implementation must not be described as fully ACP v1 compatible.
 
 ## Cross-platform process policy
 
@@ -140,7 +160,7 @@ Selected Actions:
 | `actions/setup-python` | `v7.0.0` | `5fda3b95a4ea91299a34e894583c3862153e4b97` | Node 24 |
 | `astral-sh/setup-uv` | `v10.2.0` | `c18668ad3cf93ea998bef934396af7bb5c839dc7` | Node 24 |
 
-The workflow pins uv `0.12.21`, installs from `uv.lock` with frozen resolution, grants read-only repository permissions, and does not expose repository secrets to pull-request code.
+The future workflow must pin uv `0.12.21`, install from `uv.lock` with frozen resolution, grant read-only repository permissions, and expose no repository secrets to pull-request code.
 
 ## Validation layers
 
@@ -153,9 +173,13 @@ The workflow pins uv `0.12.21`, installs from `uv.lock` with frozen resolution, 
 
 ## Rejected alternatives
 
-### Manual JSON-RPC implementation
+### Direct use of the SDK transport
 
-Rejected because the official SDK already supplies canonical schema models, framing, and cross-platform stdio behavior. Reimplementing those layers would increase protocol-drift and validation risk without improving the adapter boundary.
+Rejected for untrusted ACP input in SDK `0.12.1`. Its permissive item salvage, validation-error serialization, missing request-cancellation dispatch, and unstable close route do not satisfy the strict contract. The project-owned boundary remains intentionally small and continues using canonical SDK schema models.
+
+### Full ACP schema reimplementation
+
+Rejected because the official SDK already supplies generated canonical models and output helpers. Recreating those types would increase protocol-drift risk without improving strict input supervision.
 
 ### ACP Python SDK prerelease
 
