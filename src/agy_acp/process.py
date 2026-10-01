@@ -7,7 +7,7 @@ import os
 import signal
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from agy_acp.config import AgyProcessConfig
 from agy_acp.errors import (
@@ -21,6 +21,7 @@ from agy_acp.errors import (
 )
 from agy_acp.events import AgyEvent, AgyInitEvent, AgyUnknownEvent, parse_agy_event
 from agy_acp.executable import build_agy_argv
+from agy_acp.mcp import MCP_ENV_PREFIX, MCP_SCRUBBED_ENVIRONMENT
 from agy_acp.ndjson import NdjsonParser
 from agy_acp.transport import encode_json_line
 
@@ -28,6 +29,12 @@ from agy_acp.transport import encode_json_line
 @dataclass(frozen=True, slots=True)
 class _ProcessEnd:
     returncode: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SpawnResult:
+    process: asyncio.subprocess.Process | None = None
+    failure: Literal["timeout", "cancelled", "start", "internal"] | None = None
 
 
 class _ByteRing:
@@ -76,6 +83,7 @@ class AgyProcess:
         self._init_event: AgyInitEvent | None = None
         self._fault_cleanup: asyncio.Task[None] | None = None
         self._fault_cleanup_failed = False
+        self._shutdown_callback_done = config.shutdown_callback is None
         self._stdout_task = asyncio.create_task(
             self._read_stdout(),
             name="agy-acp.stdout",
@@ -95,22 +103,68 @@ class AgyProcess:
         config: AgyProcessConfig,
         *,
         on_started: Callable[[AgyProcess], None] | None = None,
+        timeout: float | None = None,
     ) -> AgyProcess:
-        argv = build_agy_argv(
-            config.command,
-            conversation_id=config.conversation_id,
-            additional_directories=config.additional_directories,
+        launch_timeout = (
+            config.init_timeout if timeout is None else min(config.init_timeout, timeout)
         )
+        deadline = asyncio.get_running_loop().time() + launch_timeout
         try:
-            process = await cls._spawn(config, argv)
+            argv = build_agy_argv(
+                config.command,
+                conversation_id=config.conversation_id,
+                additional_directories=config.additional_directories,
+            )
         except (OSError, RuntimeError, ValueError):
+            cls._run_prestart_callback(config)
             raise BackendStartError from None
+        except BaseException:
+            cls._run_prestart_callback(config)
+            raise
+
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            cls._run_prestart_callback(config)
+            raise BackendTimeoutError
+        try:
+            spawn_task = asyncio.create_task(
+                cls._supervise_spawn(config, argv, remaining),
+                name="agy-acp.spawn",
+            )
+        except BaseException:
+            cls._run_prestart_callback(config)
+            raise
+        cancelled = False
+        while True:
+            try:
+                spawn_result = await asyncio.shield(spawn_task)
+                break
+            except asyncio.CancelledError:
+                cancelled = True
+
+        if spawn_result.failure is not None:
+            cls._run_prestart_callback(config)
+            if cancelled or spawn_result.failure == "cancelled":
+                raise asyncio.CancelledError from None
+            if spawn_result.failure == "timeout":
+                raise BackendTimeoutError
+            raise BackendStartError from None
+        process = spawn_result.process
+        if process is None:
+            cls._run_prestart_callback(config)
+            raise BackendStartError
+
         instance = cls(config, process)
         try:
             if on_started is not None:
                 on_started(instance)
+            if cancelled:
+                raise asyncio.CancelledError
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise BackendTimeoutError
             event = await instance._receive(
-                timeout=config.init_timeout,
+                timeout=remaining,
                 before_initialization=True,
             )
             if not isinstance(event, AgyInitEvent):
@@ -122,17 +176,54 @@ class AgyProcess:
             await instance.cancel()
             raise
 
+    @classmethod
+    async def _supervise_spawn(
+        cls,
+        config: AgyProcessConfig,
+        argv: tuple[str, ...],
+        timeout: float,
+    ) -> _SpawnResult:
+        try:
+            async with asyncio.timeout(timeout):
+                process = await cls._spawn(config, argv)
+        except TimeoutError:
+            return _SpawnResult(failure="timeout")
+        except asyncio.CancelledError:
+            return _SpawnResult(failure="cancelled")
+        except (OSError, RuntimeError, ValueError):
+            return _SpawnResult(failure="start")
+        except BaseException:
+            return _SpawnResult(failure="internal")
+        return _SpawnResult(process=process)
+
+    @staticmethod
+    def _run_prestart_callback(config: AgyProcessConfig) -> None:
+        callback = config.shutdown_callback
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            raise BackendShutdownError from None
+
     @staticmethod
     async def _spawn(
         config: AgyProcessConfig,
         argv: tuple[str, ...],
     ) -> asyncio.subprocess.Process:
+        environment = {
+            name: value
+            for name, value in os.environ.items()
+            if not name.startswith(MCP_ENV_PREFIX) and name not in MCP_SCRUBBED_ENVIRONMENT
+        }
+        environment.update(config.environment_overrides)
         return await asyncio.create_subprocess_exec(
             *argv,
             cwd=str(config.cwd),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=environment,
             limit=config.max_line_bytes + 1,
             start_new_session=True,
         )
@@ -156,7 +247,7 @@ class AgyProcess:
         tasks = [self._stdout_task, self._stderr_task, self._exit_task]
         if self._fault_cleanup is not None:
             tasks.append(self._fault_cleanup)
-        return self._closed and all(task.done() for task in tasks)
+        return self._closed and self._shutdown_callback_done and all(task.done() for task in tasks)
 
     @property
     def pending_events(self) -> int:
@@ -323,6 +414,7 @@ class AgyProcess:
                 if discard_events:
                     self._discard_events = True
                     self._clear_events()
+                self._run_shutdown_callback()
                 return
             self._shutting_down = True
             if discard_events:
@@ -348,6 +440,20 @@ class AgyProcess:
             if discard_events:
                 self._clear_events()
             self._closed = True
+            self._run_shutdown_callback()
+
+    def _run_shutdown_callback(self) -> None:
+        if self._shutdown_callback_done:
+            return
+        callback = self._config.shutdown_callback
+        if callback is None:
+            self._shutdown_callback_done = True
+            return
+        try:
+            callback()
+        except Exception:
+            raise BackendShutdownError from None
+        self._shutdown_callback_done = True
 
     def _signal_gracefully(self) -> None:
         try:

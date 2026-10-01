@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from agy_acp.executable import AgyCommand
 
 _MAX_PENDING_EVENT_BYTES = 16 * 1024 * 1024
+_MAX_ENVIRONMENT_OVERRIDE_BYTES = 1024 * 1024
 
 
 def _positive_integer(name: str, value: object) -> None:
@@ -31,6 +33,12 @@ class AgyProcessConfig:
     cwd: Path
     additional_directories: tuple[Path, ...] = ()
     conversation_id: str | None = None
+    environment_overrides: tuple[tuple[str, str], ...] = field(default=(), repr=False)
+    shutdown_callback: Callable[[], None] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
     max_line_bytes: int = 4 * 1024 * 1024
     max_stderr_bytes: int = 64 * 1024
     max_pending_events: int = 2
@@ -51,6 +59,33 @@ class AgyProcessConfig:
             not self.conversation_id or "\x00" in self.conversation_id
         ):
             raise ValueError("conversation_id must be nonempty and contain no NUL")
+        if not isinstance(self.environment_overrides, tuple):
+            raise ValueError("environment_overrides must be a tuple")
+        environment_names: set[str] = set()
+        environment_bytes = 0
+        for entry in self.environment_overrides:
+            if not isinstance(entry, tuple) or len(entry) != 2:
+                raise ValueError("environment override entries must be pairs")
+            name, value = entry
+            if (
+                not isinstance(name, str)
+                or not name
+                or "=" in name
+                or "\x00" in name
+                or name in environment_names
+                or not isinstance(value, str)
+                or "\x00" in value
+            ):
+                raise ValueError("environment override is invalid")
+            try:
+                environment_bytes += len(name.encode("utf-8")) + len(value.encode("utf-8"))
+            except UnicodeError:
+                raise ValueError("environment override is invalid") from None
+            environment_names.add(name)
+        if environment_bytes > _MAX_ENVIRONMENT_OVERRIDE_BYTES:
+            raise ValueError("environment overrides exceed the byte limit")
+        if self.shutdown_callback is not None and not callable(self.shutdown_callback):
+            raise ValueError("shutdown_callback must be callable")
         _positive_integer("max_line_bytes", self.max_line_bytes)
         _positive_integer("max_stderr_bytes", self.max_stderr_bytes)
         _positive_integer("max_pending_events", self.max_pending_events)

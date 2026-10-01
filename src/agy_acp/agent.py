@@ -36,10 +36,18 @@ from agy_acp.errors import (
     BackendProcessError,
     BackendShutdownError,
     BackendTimeoutError,
+    InvalidMcpConfigError,
+    McpHandoffError,
     ProtocolEncodingError,
 )
 from agy_acp.events import AgyEvent, AgyResultEvent, AgyResultStatus, AgyStepUpdateEvent
 from agy_acp.executable import AgyCommand
+from agy_acp.mcp import (
+    McpServerSpec,
+    McpWorkspaceManager,
+    parse_mcp_servers,
+    resolve_mcp_servers,
+)
 from agy_acp.process import AgyProcess
 
 UpdateSender = Callable[[str, dict[str, object]], Awaitable[None]]
@@ -65,6 +73,7 @@ def _positive_seconds(name: str, value: object) -> None:
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
     command: AgyCommand
+    mcp_temp_parent: Path | None = None
     max_line_bytes: int = 4 * 1024 * 1024
     max_stderr_bytes: int = 64 * 1024
     max_pending_events: int = 2
@@ -78,6 +87,12 @@ class AgentConfig:
     def __post_init__(self) -> None:
         if not isinstance(self.command, AgyCommand):
             raise ValueError("command must be an AgyCommand")
+        if self.mcp_temp_parent is not None and (
+            not isinstance(self.mcp_temp_parent, Path)
+            or not self.mcp_temp_parent.is_absolute()
+            or not self.mcp_temp_parent.is_dir()
+        ):
+            raise ValueError("mcp_temp_parent must be an existing absolute directory")
         for name in (
             "max_line_bytes",
             "max_stderr_bytes",
@@ -101,6 +116,7 @@ class AgentConfig:
 @dataclass(slots=True)
 class _Session:
     process_config: AgyProcessConfig
+    mcp_servers: tuple[McpServerSpec, ...]
     process: AgyProcess | None
     active_prompt: asyncio.Task[object] | None = None
     cancel_requested: bool = False
@@ -238,6 +254,7 @@ class AgyAgent:
         self._send_update = send_update
         self._sessions: dict[str, _Session] = {}
         self._orphaned_processes: set[AgyProcess] = set()
+        self._mcp_manager: McpWorkspaceManager | None = None
         self._admission_lock = asyncio.Lock()
         self._starting_sessions = 0
         self._starting_tasks: set[asyncio.Task[object]] = set()
@@ -257,6 +274,27 @@ class AgyAgent:
             agent_info=Implementation(name="agy-acp", version=__version__),
         )
 
+    def _prepare_process_config(
+        self,
+        base: AgyProcessConfig,
+        mcp_servers: tuple[McpServerSpec, ...],
+    ) -> AgyProcessConfig:
+        if not mcp_servers:
+            return base
+        if self._mcp_manager is None:
+            self._mcp_manager = McpWorkspaceManager(temp_parent=self._config.mcp_temp_parent)
+        generation = self._mcp_manager.prepare(mcp_servers)
+        try:
+            return replace(
+                base,
+                additional_directories=(*base.additional_directories, generation.root),
+                environment_overrides=generation.environment_overrides,
+                shutdown_callback=generation.close,
+            )
+        except (TypeError, ValueError):
+            generation.close()
+            raise McpHandoffError from None
+
     async def new_session(
         self,
         *,
@@ -264,8 +302,10 @@ class AgyAgent:
         mcp_servers: list[object],
         additional_directories: list[str] | None = None,
     ) -> NewSessionResponse:
-        if mcp_servers:
-            raise _invalid_params()
+        try:
+            parsed_mcp_servers = resolve_mcp_servers(parse_mcp_servers(mcp_servers))
+        except InvalidMcpConfigError:
+            raise _invalid_params() from None
         additional_paths = _parse_additional_directories(additional_directories)
         workspace = Path(cwd)
         if not workspace.is_absolute() or not workspace.is_dir():
@@ -292,10 +332,16 @@ class AgyAgent:
 
         try:
             try:
-                process = await AgyProcess.launch(
+                launch_config = self._prepare_process_config(
                     process_config,
+                    parsed_mcp_servers,
+                )
+                process = await AgyProcess.launch(
+                    launch_config,
                     on_started=remember_start,
                 )
+            except McpHandoffError:
+                raise _backend_unavailable() from None
             except BackendTimeoutError:
                 if starting_process is not None and not starting_process.closed:
                     self._orphaned_processes.add(starting_process)
@@ -321,6 +367,7 @@ class AgyAgent:
                         raise _backend_unavailable()
                     self._sessions[session_id] = _Session(
                         process_config=process_config,
+                        mcp_servers=parsed_mcp_servers,
                         process=None,
                     )
                     self._starting_sessions -= 1
@@ -404,6 +451,13 @@ class AgyAgent:
                 await self._mark_unusable(session_id, session, current)
                 raise
         process_config = replace(session.process_config, conversation_id=session_id)
+        try:
+            process_config = self._prepare_process_config(
+                process_config,
+                session.mcp_servers,
+            )
+        except McpHandoffError:
+            raise _backend_unavailable() from None
         started_process: AgyProcess | None = None
 
         def attach_start(process: AgyProcess) -> None:
@@ -416,6 +470,7 @@ class AgyAgent:
                 process = await AgyProcess.launch(
                     process_config,
                     on_started=attach_start,
+                    timeout=self._remaining_prompt_time(deadline),
                 )
         except BackendTimeoutError:
             if started_process is not None:
@@ -906,5 +961,10 @@ class AgyAgent:
                 if isinstance(result, BaseException):
                     self._orphaned_processes.add(process)
                     cleanup_failed = True
+        if not cleanup_failed and self._mcp_manager is not None:
+            try:
+                self._mcp_manager.close()
+            except McpHandoffError:
+                cleanup_failed = True
         if cleanup_failed:
             raise BackendShutdownError

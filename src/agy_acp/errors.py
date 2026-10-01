@@ -98,7 +98,7 @@ class BackendWriteError(BackendProcessError):
 
 class BackendShutdownError(BackendProcessError):
     def __init__(self) -> None:
-        super().__init__("Backend shutdown timed out")
+        super().__init__("Backend shutdown failed")
 
 
 class AcpRequestError(AgyAcpError):
@@ -110,3 +110,13 @@ class AcpRequestError(AgyAcpError):
 
 class ProtocolWriteError(AgyAcpError):
     """Raised after protocol output becomes indeterminate or unavailable."""
+
+
+class InvalidMcpConfigError(AgyAcpError):
+    def __init__(self) -> None:
+        super().__init__("Invalid MCP server configuration")
+
+
+class McpHandoffError(AgyAcpError):
+    def __init__(self) -> None:
+        super().__init__("MCP handoff failed")
