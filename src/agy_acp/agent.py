@@ -257,12 +257,25 @@ class AgyAgent:
         )
         await self._reserve_session()
         reserved = True
+        starting_process: AgyProcess | None = None
+
+        def remember_start(process: AgyProcess) -> None:
+            nonlocal starting_process
+            starting_process = process
+
         try:
             try:
-                process = await AgyProcess.launch(process_config)
+                process = await AgyProcess.launch(
+                    process_config,
+                    on_started=remember_start,
+                )
             except BackendTimeoutError:
+                if starting_process is not None and not starting_process.closed:
+                    self._orphaned_processes.add(starting_process)
                 raise AcpRequestError(-32011, "Initialization timed out") from None
             except BackendProcessError:
+                if starting_process is not None and not starting_process.closed:
+                    self._orphaned_processes.add(starting_process)
                 raise _backend_unavailable() from None
             try:
                 if Path(process.init_event.cwd).resolve() != workspace.resolve():
@@ -356,18 +369,50 @@ class AgyAgent:
                 await self._mark_unusable(session_id, session, current)
                 raise
         process_config = replace(session.process_config, conversation_id=session_id)
+        started_process: AgyProcess | None = None
+
+        def attach_start(process: AgyProcess) -> None:
+            nonlocal started_process
+            started_process = process
+            session.process = process
+
         try:
             async with asyncio.timeout(self._remaining_prompt_time(deadline)):
-                process = await AgyProcess.launch(process_config)
+                process = await AgyProcess.launch(
+                    process_config,
+                    on_started=attach_start,
+                )
         except BackendTimeoutError:
+            if started_process is not None:
+                if started_process.closed:
+                    if session.process is started_process:
+                        session.process = None
+                elif not self._is_cancelling(session):
+                    await self._mark_unusable(session_id, session, started_process)
             raise AcpRequestError(-32011, "Initialization timed out") from None
+        except BackendProcessError:
+            if started_process is not None:
+                if started_process.closed:
+                    if session.process is started_process:
+                        session.process = None
+                elif not self._is_cancelling(session):
+                    await self._mark_unusable(session_id, session, started_process)
+            raise
         except TimeoutError:
+            if started_process is not None:
+                if started_process.closed:
+                    if session.process is started_process:
+                        session.process = None
+                else:
+                    await self._mark_unusable(session_id, session, started_process)
             raise BackendTimeoutError from None
         try:
             if (
                 process.init_event.conversation_id != session_id
                 or Path(process.init_event.cwd).resolve() != process_config.cwd.resolve()
                 or self._closing
+                or session.closed
+                or session.unusable
                 or self._sessions.get(session_id) is not session
             ):
                 raise _backend_unavailable()
@@ -677,10 +722,15 @@ class AgyAgent:
         cleanup: asyncio.Task[None] | None,
         wait_for_prompt: bool,
     ) -> None:
+        parts: list[Awaitable[object]] = []
         if cleanup is not None:
-            await cleanup
+            parts.append(cleanup)
         if wait_for_prompt:
-            await session.prompt_done.wait()
+            parts.append(session.prompt_done.wait())
+        results = await asyncio.gather(*parts, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
 
     async def close_session(self, session_id: str) -> CloseSessionResponse:
         async with self._admission_lock:

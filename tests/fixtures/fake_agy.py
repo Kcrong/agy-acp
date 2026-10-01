@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 MODE = sys.argv[1]
-MARKER_ROOT = Path(sys.argv[2]) if len(sys.argv) > 2 else None
+MARKER_ROOT = Path(sys.argv[2]) if len(sys.argv) > 2 and Path(sys.argv[2]).is_absolute() else None
 CONVERSATION_ID = f"fake-{Path.cwd().name}" if MODE == "unique" else "fake-session"
 INIT_CONVERSATION_ID = "fake\x00session" if MODE == "nul-conversation" else CONVERSATION_ID
 
@@ -56,6 +56,8 @@ if MODE == "no-init":
 if MODE == "slow-init":
     time.sleep(30)
 if MODE == "restart-slow-init" and "--conversation" in sys.argv[2:]:
+    if MARKER_ROOT is not None:
+        (MARKER_ROOT / "restart-started").write_text("started", encoding="utf-8")
     time.sleep(30)
 
 if MODE in {"ignore-term", "descendant", "idle-exit-descendant"}:

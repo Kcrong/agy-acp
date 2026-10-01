@@ -926,3 +926,83 @@ async def test_close_cleanup_failure_quarantines_session(
             await agent.close_session(session.session_id)
 
     await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_close_session_during_generation_launch(tmp_path: Path) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    marker_root = tmp_path / "markers"
+    marker_root.mkdir()
+    agent = AgyAgent(
+        agent_config(
+            tmp_path,
+            "restart-slow-init",
+            init_timeout=2,
+            marker_root=marker_root,
+        ),
+        send_update,
+    )
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    prompting = asyncio.create_task(
+        agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    )
+    async with asyncio.timeout(2):
+        while not (marker_root / "restart-started").exists():
+            await asyncio.sleep(0.01)
+
+    closed = await agent.close_session(session.session_id)
+    assert closed.model_dump(mode="json", by_alias=True, exclude_none=True) == {}
+    assert (await prompting).stop_reason == "cancelled"
+    with pytest.raises(AcpRequestError, match="Session not found"):
+        await agent.close_session(session.session_id)
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_close_launch_cleanup_failure_quarantines_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    marker_root = tmp_path / "markers"
+    marker_root.mkdir()
+    agent = AgyAgent(
+        agent_config(
+            tmp_path,
+            "restart-slow-init",
+            init_timeout=0.2,
+            marker_root=marker_root,
+        ),
+        send_update,
+    )
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    prompting = asyncio.create_task(
+        agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    )
+    async with asyncio.timeout(2):
+        while not (marker_root / "restart-started").exists():
+            await asyncio.sleep(0.01)
+
+    async def fail_cancel(_process: AgyProcess) -> None:
+        raise BackendShutdownError
+
+    with monkeypatch.context() as patch:
+        patch.setattr(AgyProcess, "cancel", fail_cancel)
+        with pytest.raises(AcpRequestError, match="Backend unavailable"):
+            await agent.close_session(session.session_id)
+        with pytest.raises(AcpRequestError, match="Backend unavailable"):
+            await prompting
+        with pytest.raises(AcpRequestError, match="Session not found"):
+            await agent.close_session(session.session_id)
+
+    await agent.close()
