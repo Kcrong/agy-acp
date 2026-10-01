@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "agy-acp"
 version = "0.1.0"
 description = "ACP v1 adapter for the Google Antigravity CLI"
+readme = "README.md"
 requires-python = ">=3.13,<3.15"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -15,6 +16,8 @@ dependencies = [
 
 [project.urls]
 Repository = "https://github.com/Kcrong/agy-acp"
+Issues = "https://github.com/Kcrong/agy-acp/issues"
+Security = "https://github.com/Kcrong/agy-acp/security/policy"
 
 [project.scripts]
 agy-acp = "agy_acp.cli:main"
@@ -33,7 +36,15 @@ dev = [
 packages = ["src/agy_acp"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/agy_acp", "pyproject.toml", "uv.lock"]
+include = [
+  "src/agy_acp",
+  "pyproject.toml",
+  "uv.lock",
+  "README.md",
+  "LICENSE",
+  "SECURITY.md",
+  "CONTRIBUTING.md",
+]
 
 [tool.ruff]
 target-version = "py313"
