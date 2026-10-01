@@ -71,7 +71,7 @@
 - [x] Linux·macOS·Windows를 대상으로 GitHub Actions workflow를 작성합니다.
 - [x] Actions 사용량 소진으로 실행 전 실패하면 원인과 local 검증 결과를 PR에 기록합니다.
 - [x] PR-introduced history와 package contents에 secret·token·machine-specific path가 없음을 검사합니다.
-- [ ] Public visibility 전 inherited `main` root `21334d1`의 machine-derived Git identity를 별도 default-history rewrite로 정리합니다. 이 항목은 current code merge와 분리된 public-release gate입니다.
+- [ ] Public visibility 전 retained machine identity를 Low metadata로 명시적으로 수용할지, zero-metadata가 필수이면 clean squashed public repository를 별도로 만들지 결정합니다. Current `main`-only rewrite는 retained PR/Actions records를 정리하지 못하므로 수행하지 않습니다.
 
 ## 7. 완료 게이트
 
@@ -86,7 +86,7 @@
 - [x] Repository가 private이고 `main` ruleset, vulnerability alerts, automated security fixes가 활성 상태임을 live API로 확인합니다.
 - [x] GitHub 공식 문서에서 private→public 전환 시 code·Actions history/log 공개, private fork 분리, push ruleset 비활성화, public Advanced Security 활성화를 확인합니다.
 - [x] 전체 Git history, tracked files, package tarball, Actions logs·artifacts를 redacted/count-only 방식으로 검사했습니다. Critical·High secret finding 0이며 23 runs/92 jobs는 executed steps·logs·artifacts 0입니다.
-- [ ] Inherited root `21334d1`의 machine-derived identity를 제거할 default-history replacement 절차와 rollback ref를 준비하고 별도 explicit approval을 받습니다.
+- [ ] Current repository의 Low retained metadata 수용 또는 zero-metadata clean repository 생성 경로를 explicit approval로 결정합니다.
 - [ ] Public 전환 전에 default branch ruleset에 required hosted checks와 approving review 1개를 추가하고, 전환 후 deletion·non-fast-forward·squash-only PR 보호와 함께 active인지 재검증합니다. GitHub가 자동 disable하는 대상은 별도 push rulesets입니다.
 - [x] Actions capacity 복구 후 [PR #5](https://github.com/Kcrong/agy-acp/pull/5) run `36798755644`에서 Linux Node 22/24, macOS Node 22, Windows Node 22 hosted matrix가 모두 실제 runner에서 통과했습니다.
 - [x] Public repository community profile, `SECURITY.md`, license, contribution docs, issue settings와 package metadata를 독립 검토했습니다.
