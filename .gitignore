@@ -1,0 +1,23 @@
+# Local planning and agent state
+north_star.md
+roadmap.md
+tasks.md
+.kiro/
+
+# Python environments and bytecode
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Test, type-check, and lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build and packaging outputs
+build/
+dist/
+*.egg-info/
