@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Mapping
-from typing import Any
 
-from pydantic import BaseModel
+from acp.schema import InitializeRequest
+from pydantic import BaseModel, ValidationError
 
 from agy_acp.agent import AgyAgent
 from agy_acp.errors import (
@@ -48,6 +48,21 @@ def _validate_params(
         raise _invalid_params()
 
 
+def _same_json_shape(left: object, right: object) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            _same_json_shape(value, right[key]) for key, value in left.items()
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _same_json_shape(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
+
+
 def _required_string(values: Mapping[str, object], key: str) -> str:
     value = values.get(key)
     if not isinstance(value, str) or not value:
@@ -72,54 +87,77 @@ class AcpStdioServer:
         *,
         max_line_bytes: int,
         write_timeout: float = 15.0,
+        max_in_flight: int = 256,
     ) -> None:
+        if type(max_in_flight) is not int or max_in_flight <= 0:
+            raise ValueError("max_in_flight must be a positive integer")
         self._agent = agent
         self._reader = reader
         self._writer = writer
         self._max_line_bytes = max_line_bytes
         self._write_timeout = write_timeout
+        self._max_in_flight = max_in_flight
         self._write_lock = asyncio.Lock()
         self._requests: dict[RequestId, asyncio.Task[None]] = {}
-        self._notifications: set[asyncio.Task[None]] = set()
         self._initialized = False
         self._closing = False
 
     async def serve(self) -> None:
         parser = NdjsonParser(max_line_bytes=self._max_line_bytes)
+        discarding_oversized_record = False
         try:
             while chunk := await self._reader.read(min(64 * 1024, self._max_line_bytes + 1)):
-                for message in parser.feed(chunk):
-                    self._accept(message)
-            parser.finish()
-        except NdjsonError as error:
-            code = -32600 if isinstance(error, (LineTooLongError, NonObjectError)) else -32700
-            await self._send_error(
-                None, code, "Invalid request" if code == -32600 else "Parse error"
-            )
+                offset = 0
+                while offset < len(chunk):
+                    newline = chunk.find(b"\n", offset)
+                    complete = newline >= 0
+                    end = newline + 1 if complete else len(chunk)
+                    segment = chunk[offset:end]
+                    offset = end
+                    if discarding_oversized_record:
+                        if complete:
+                            discarding_oversized_record = False
+                            parser = NdjsonParser(max_line_bytes=self._max_line_bytes)
+                        continue
+                    try:
+                        messages = parser.feed(segment)
+                    except NdjsonError as error:
+                        await self._send_parser_error(error)
+                        parser = NdjsonParser(max_line_bytes=self._max_line_bytes)
+                        discarding_oversized_record = not complete and isinstance(
+                            error, LineTooLongError
+                        )
+                        continue
+                    for message in messages:
+                        await self._accept(message)
+            if not discarding_oversized_record:
+                try:
+                    parser.finish()
+                except NdjsonError as error:
+                    await self._send_parser_error(error)
         finally:
             await self._close()
 
-    def _accept(self, message: Mapping[str, object]) -> None:
+    async def _send_parser_error(self, error: NdjsonError) -> None:
+        code = -32600 if isinstance(error, (LineTooLongError, NonObjectError)) else -32700
+        await self._send_error(
+            None,
+            code,
+            "Invalid request" if code == -32600 else "Parse error",
+        )
+
+    async def _accept(self, message: Mapping[str, object]) -> None:
         try:
             request_id, method = self._validate_envelope(message)
         except AcpRequestError as error:
-            self._track_notification(
-                self._send_error(None, error.code, error.message),
-                "agy-acp.invalid-request",
-            )
+            await self._send_error(None, error.code, error.message)
             return
 
         if request_id is None:
-            self._track_notification(
-                self._run_notification(method, message),
-                f"agy-acp.notification.{method}",
-            )
+            await self._run_notification(method, message)
             return
-        if request_id in self._requests:
-            self._track_notification(
-                self._send_error(request_id, -32600, "Invalid request"),
-                "agy-acp.duplicate-request",
-            )
+        if request_id in self._requests or len(self._requests) >= self._max_in_flight:
+            await self._send_error(request_id, -32600, "Invalid request")
             return
         task = asyncio.create_task(
             self._run_request(request_id, method, message),
@@ -159,17 +197,29 @@ class AcpStdioServer:
     ) -> None:
         try:
             result = await self._dispatch_request(method, message)
+            await self._send_result_uninterruptibly(request_id, result)
         except asyncio.CancelledError:
             if not self._closing:
-                await self._send_error(request_id, -32800, "Request cancelled")
+                await self._send_error_uninterruptibly(
+                    request_id,
+                    -32800,
+                    "Request cancelled",
+                )
             return
         except AcpRequestError as error:
-            await self._send_error(request_id, error.code, error.message)
+            await self._send_error_uninterruptibly(
+                request_id,
+                error.code,
+                error.message,
+            )
             return
         except Exception:
-            await self._send_error(request_id, -32603, "Internal error")
+            await self._send_error_uninterruptibly(
+                request_id,
+                -32603,
+                "Internal error",
+            )
             return
-        await self._send_result(request_id, result)
 
     async def _dispatch_request(
         self,
@@ -186,18 +236,19 @@ class AcpStdioServer:
             )
             if self._initialized:
                 raise _invalid_request()
-            protocol_version = params.get("protocolVersion")
-            if (
-                isinstance(protocol_version, bool)
-                or not isinstance(protocol_version, int)
-                or not 0 <= protocol_version <= 65535
-            ):
+            try:
+                request = InitializeRequest.model_validate(params)
+                normalized = request.model_dump(
+                    mode="json",
+                    by_alias=True,
+                    exclude_unset=True,
+                    warnings=False,
+                )
+            except ValidationError:
+                raise _invalid_params() from None
+            if not _same_json_shape(dict(params), normalized):
                 raise _invalid_params()
-            for key in ("clientCapabilities", "clientInfo"):
-                value = params.get(key)
-                if value is not None and not isinstance(value, Mapping):
-                    raise _invalid_params()
-            result = await self._agent.initialize(protocol_version=protocol_version)
+            result = await self._agent.initialize(protocol_version=request.protocol_version)
             self._initialized = True
             return result
         if not self._initialized:
@@ -263,6 +314,49 @@ class AcpStdioServer:
             }
         )
 
+    async def _send_error_uninterruptibly(
+        self,
+        request_id: RequestId,
+        code: int,
+        message: str,
+    ) -> None:
+        sending = asyncio.create_task(
+            self._send_error(request_id, code, message),
+            name="agy-acp.error-response",
+        )
+        while True:
+            try:
+                await asyncio.shield(sending)
+                return
+            except asyncio.CancelledError:
+                if self._closing:
+                    sending.cancel()
+                    await asyncio.gather(sending, return_exceptions=True)
+                    raise
+                if sending.done():
+                    return sending.result()
+
+    async def _send_result_uninterruptibly(
+        self,
+        request_id: RequestId,
+        result: BaseModel,
+    ) -> None:
+        sending = asyncio.create_task(
+            self._send_result(request_id, result),
+            name="agy-acp.response",
+        )
+        while True:
+            try:
+                await asyncio.shield(sending)
+                return
+            except asyncio.CancelledError:
+                if self._closing:
+                    sending.cancel()
+                    await asyncio.gather(sending, return_exceptions=True)
+                    raise
+                if sending.done():
+                    return sending.result()
+
     async def _send_result(self, request_id: RequestId, result: BaseModel) -> None:
         await self._send(
             {
@@ -299,23 +393,11 @@ class AcpStdioServer:
             async with asyncio.timeout(self._write_timeout):
                 await self._writer.drain()
 
-    def _track_notification(self, awaitable: Any, name: str) -> None:
-        task = asyncio.create_task(awaitable, name=name)
-        self._notifications.add(task)
-
-        def remove_notification(completed: asyncio.Task[None]) -> None:
-            self._notifications.discard(completed)
-            if not completed.cancelled():
-                completed.exception()
-
-        task.add_done_callback(remove_notification)
-
     async def _close(self) -> None:
         if self._closing:
             return
         self._closing = True
         requests = list(self._requests.values())
-        notifications = list(self._notifications)
         for task in requests:
             task.cancel()
         cleanup_error: BaseException | None = None
@@ -323,9 +405,8 @@ class AcpStdioServer:
             await self._agent.close()
         except BaseException as error:
             cleanup_error = error
-        await asyncio.gather(*requests, *notifications, return_exceptions=True)
+        await asyncio.gather(*requests, return_exceptions=True)
         self._requests.clear()
-        self._notifications.clear()
         self._writer.close()
         with contextlib.suppress(Exception):
             await self._writer.wait_closed()

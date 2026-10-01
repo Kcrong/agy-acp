@@ -19,6 +19,8 @@ def agent_config(
     *,
     prompt_timeout: float = 2,
     init_timeout: float = 2,
+    max_sessions: int = 16,
+    response_barrier: float = 0.01,
 ) -> AgentConfig:
     return AgentConfig(
         command=AgyCommand(
@@ -28,9 +30,11 @@ def agent_config(
         max_line_bytes=4096,
         max_stderr_bytes=64,
         max_pending_events=8,
+        max_sessions=max_sessions,
         init_timeout=init_timeout,
         write_timeout=1,
         prompt_timeout=prompt_timeout,
+        response_barrier=response_barrier,
         cancel_grace=0.1,
         kill_grace=1,
     )
@@ -161,6 +165,11 @@ async def test_session_cancel_returns_cancelled_prompt(tmp_path: Path) -> None:
     response = await prompting
 
     assert response.stop_reason == "cancelled"
+    with pytest.raises(AcpRequestError, match="Session not found"):
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "second"}],
+        )
     await agent.close()
 
 
@@ -279,6 +288,11 @@ async def test_prompt_timeout_is_fixed_and_payload_free(tmp_path: Path) -> None:
         )
     assert raised.value.code == -32012
     assert "sentinel" not in str(raised.value)
+    with pytest.raises(AcpRequestError, match="Session not found"):
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "second"}],
+        )
     await agent.close()
 
 
@@ -336,4 +350,187 @@ async def test_oversized_serialized_prompt_is_invalid_params(tmp_path: Path) -> 
             prompt=[{"type": "text", "text": "x" * 5000}],
         )
     assert raised.value.code == -32602
+    await agent.close()
+
+
+@pytest.mark.parametrize("max_sessions", [0, -1, True])
+def test_agent_config_requires_positive_session_capacity(
+    tmp_path: Path,
+    max_sessions: int,
+) -> None:
+    with pytest.raises(ValueError, match="max_sessions must be a positive integer"):
+        agent_config(tmp_path, "normal", max_sessions=max_sessions)
+
+
+@pytest.mark.asyncio
+async def test_active_session_capacity_is_bounded(tmp_path: Path) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    agent = AgyAgent(
+        agent_config(tmp_path, "normal", max_sessions=1),
+        send_update,
+    )
+    await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    with pytest.raises(AcpRequestError, match="Session capacity exceeded") as raised:
+        await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    assert raised.value.code == -32014
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_starting_session_reserves_and_releases_capacity(tmp_path: Path) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    agent = AgyAgent(
+        agent_config(
+            tmp_path,
+            "slow-init",
+            init_timeout=0.05,
+            max_sessions=1,
+        ),
+        send_update,
+    )
+    starting = asyncio.create_task(agent.new_session(cwd=str(tmp_path), mcp_servers=[]))
+    await asyncio.sleep(0.01)
+    with pytest.raises(AcpRequestError, match="Session capacity exceeded"):
+        await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    with pytest.raises(AcpRequestError, match="Initialization timed out"):
+        await starting
+    with pytest.raises(AcpRequestError, match="Initialization timed out") as retried:
+        await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    assert retried.value.code == -32011
+    await agent.close()
+
+
+@pytest.mark.parametrize("mode", ["pre-result", "duplicate-result", "late-update"])
+@pytest.mark.asyncio
+async def test_prompt_rejects_events_outside_one_terminal_generation(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    agent = AgyAgent(
+        agent_config(tmp_path, mode, response_barrier=0.05),
+        send_update,
+    )
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    if mode == "pre-result":
+        await asyncio.sleep(0.05)
+    with pytest.raises(AcpRequestError, match="Backend unavailable"):
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    with pytest.raises(AcpRequestError, match="Session not found"):
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "second"}],
+        )
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_backend_cancelled_result_maps_to_cancelled(tmp_path: Path) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    agent = AgyAgent(agent_config(tmp_path, "backend-canceled"), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+
+    response = await agent.prompt(
+        session_id=session.session_id,
+        prompt=[{"type": "text", "text": "hello"}],
+    )
+    assert response.stop_reason == "cancelled"
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_slow_update_uses_prompt_deadline_and_retires_session(tmp_path: Path) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        await asyncio.sleep(1)
+
+    agent = AgyAgent(
+        agent_config(tmp_path, "normal", prompt_timeout=0.05),
+        send_update,
+    )
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    with pytest.raises(AcpRequestError, match="Prompt timed out") as raised:
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    assert raised.value.code == -32012
+    with pytest.raises(AcpRequestError, match="Session not found"):
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "second"}],
+        )
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_session_cancel_wins_over_failed_update_delivery(tmp_path: Path) -> None:
+    update_arrived = asyncio.Event()
+    release_update = asyncio.Event()
+
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        update_arrived.set()
+        await release_update.wait()
+        raise RuntimeError("credential-sentinel")
+
+    agent = AgyAgent(agent_config(tmp_path, "normal"), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    prompting = asyncio.create_task(
+        agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    )
+    async with asyncio.timeout(2):
+        await update_arrived.wait()
+    cancelling = asyncio.create_task(agent.cancel(session.session_id))
+    await asyncio.sleep(0)
+    release_update.set()
+
+    assert (await prompting).stop_reason == "cancelled"
+    await cancelling
+    await agent.close()
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "backend-error",
+        "backend-interrupted",
+        "backend-invalid",
+        "backend-waiting",
+        "backend-running",
+    ],
+)
+@pytest.mark.asyncio
+async def test_unsolicited_nonterminal_or_failed_results_fail_closed(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    agent = AgyAgent(agent_config(tmp_path, mode), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    with pytest.raises(AcpRequestError, match="Backend unavailable") as raised:
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    assert raised.value.code == -32010
+    with pytest.raises(AcpRequestError, match="Session not found"):
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "second"}],
+        )
     await agent.close()

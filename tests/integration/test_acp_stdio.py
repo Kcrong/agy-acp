@@ -35,6 +35,7 @@ async def start_server(
     mode: str,
     *,
     max_line_bytes: int | None = None,
+    max_in_flight: int | None = None,
     marker_root: Path | None = None,
 ) -> asyncio.subprocess.Process:
     command = [
@@ -48,6 +49,8 @@ async def start_server(
     ]
     if max_line_bytes is not None:
         command.extend(("--max-line-bytes", str(max_line_bytes)))
+    if max_in_flight is not None:
+        command.extend(("--max-in-flight", str(max_in_flight)))
     process = await asyncio.create_subprocess_exec(
         *command,
         stdin=asyncio.subprocess.PIPE,
@@ -248,10 +251,15 @@ async def test_stdio_rejects_malformed_or_oversized_input(
         "id": None,
         "error": {"code": expected_code, "message": expected_message},
     }
-    async with asyncio.timeout(3):
-        assert await process.wait() == 0
-    assert process.stderr is not None
-    assert await process.stderr.read() == b""
+    await send(
+        process,
+        {"jsonrpc": "2.0", "id": 9, "method": "unknown", "params": {}},
+    )
+    assert (await receive(process))["error"] == {
+        "code": -32601,
+        "message": "Method not found",
+    }
+    await stop_server(process)
 
 
 @pytest.mark.asyncio
@@ -362,6 +370,22 @@ async def test_stdio_request_level_cancellation_returns_fixed_error(tmp_path: Pa
         "id": 3,
         "error": {"code": -32800, "message": "Request cancelled"},
     }
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "session/prompt",
+            "params": {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "second"}],
+            },
+        },
+    )
+    assert (await receive(process))["error"] == {
+        "code": -32015,
+        "message": "Session not found",
+    }
     await stop_server(process)
 
 
@@ -403,3 +427,95 @@ async def test_stdio_disconnect_terminates_backend_process_group(tmp_path: Path)
     assert not (marker_root / "descendant-survived").exists()
     assert process.stderr is not None
     assert await process.stderr.read() == b""
+
+
+@pytest.mark.asyncio
+async def test_stdio_bounds_concurrent_request_tasks(tmp_path: Path) -> None:
+    process = await start_server(tmp_path, "hang", max_in_flight=1)
+    await initialize(process)
+    session_id = await new_session(process, tmp_path)
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "session/prompt",
+            "params": {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "hello"}],
+            },
+        },
+    )
+    assert (await receive(process))["method"] == "session/update"
+    await send(
+        process,
+        {"jsonrpc": "2.0", "id": 4, "method": "unknown", "params": {}},
+    )
+    assert await receive(process) == {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "error": {"code": -32600, "message": "Invalid request"},
+    }
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "method": "session/cancel",
+            "params": {"sessionId": session_id},
+        },
+    )
+    assert (await receive(process))["result"] == {"stopReason": "cancelled"}
+    await stop_server(process)
+
+
+@pytest.mark.asyncio
+async def test_stdio_rejects_salvaged_initialize_fields_without_echo(
+    tmp_path: Path,
+) -> None:
+    process = await start_server(tmp_path, "normal")
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": 1,
+                "clientCapabilities": {"fs": "credential-sentinel"},
+            },
+        },
+    )
+    response = await receive(process)
+    assert response == {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {"code": -32602, "message": "Invalid params"},
+    }
+    assert "sentinel" not in json.dumps(response)
+    await initialize(process)
+    await stop_server(process)
+
+
+@pytest.mark.asyncio
+async def test_stdio_keeps_valid_record_before_coalesced_parse_error(
+    tmp_path: Path,
+) -> None:
+    process = await start_server(tmp_path, "normal")
+    initialize_record = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": 1, "clientCapabilities": {}},
+        },
+        separators=(",", ":"),
+    ).encode()
+    await send_bytes(process, initialize_record + b"\n{broken}\n")
+
+    responses = [await receive(process), await receive(process)]
+    assert any(response.get("id") == 1 and "result" in response for response in responses)
+    assert any(
+        response.get("error") == {"code": -32700, "message": "Parse error"}
+        for response in responses
+    )
+    await stop_server(process)

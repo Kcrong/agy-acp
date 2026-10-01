@@ -98,6 +98,8 @@ if MODE == "close-stdout":
     time.sleep(30)
 if MODE == "no-read":
     time.sleep(30)
+if MODE == "pre-result":
+    emit(result())
 
 for line in sys.stdin:
     payload = json.loads(line)
@@ -157,5 +159,37 @@ for line in sys.stdin:
         continue
     if MODE == "result-mismatch":
         emit(result(conversation_id="other-session"))
+        continue
+    if MODE == "backend-canceled":
+        emit(result("CANCELED"))
+        continue
+    terminal_statuses = {
+        "backend-error": "ERROR",
+        "backend-interrupted": "INTERRUPTED",
+        "backend-invalid": "INVALID",
+        "backend-waiting": "WAITING",
+        "backend-running": "RUNNING",
+    }
+    if MODE in terminal_statuses:
+        emit(result(terminal_statuses[MODE]))
+        continue
+    if MODE == "duplicate-result":
+        emit(result())
+        emit(result())
+        continue
+    if MODE == "late-update":
+        emit(result())
+        emit(
+            {
+                "event": "step_update",
+                "step_update": {
+                    "conversation_id": CONVERSATION_ID,
+                    "step_index": 2,
+                    "state": "ACTIVE",
+                    "step_type": "agent_response",
+                    "text_delta": "stale-response",
+                },
+            }
+        )
         continue
     emit(result())

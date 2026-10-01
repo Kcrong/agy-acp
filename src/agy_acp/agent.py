@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -46,13 +47,17 @@ class AgentConfig:
     max_line_bytes: int = 4 * 1024 * 1024
     max_stderr_bytes: int = 64 * 1024
     max_pending_events: int = 256
+    max_sessions: int = 16
     init_timeout: float = 15.0
     write_timeout: float = 15.0
     prompt_timeout: float = 30 * 60.0
+    response_barrier: float = 0.01
     cancel_grace: float = 5.0
     kill_grace: float = 2.0
 
     def __post_init__(self) -> None:
+        if type(self.max_sessions) is not int or self.max_sessions <= 0:
+            raise ValueError("max_sessions must be a positive integer")
         if isinstance(self.prompt_timeout, bool) or not isinstance(
             self.prompt_timeout, int | float
         ):
@@ -63,6 +68,16 @@ class AgentConfig:
             raise ValueError("prompt_timeout must be positive and finite") from None
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("prompt_timeout must be positive and finite")
+        if isinstance(self.response_barrier, bool) or not isinstance(
+            self.response_barrier, int | float
+        ):
+            raise ValueError("response_barrier must be positive and finite")
+        try:
+            barrier = float(self.response_barrier)
+        except OverflowError:
+            raise ValueError("response_barrier must be positive and finite") from None
+        if not math.isfinite(barrier) or barrier <= 0:
+            raise ValueError("response_barrier must be positive and finite")
 
 
 @dataclass(slots=True)
@@ -182,6 +197,8 @@ class AgyAgent:
         self._config = config
         self._send_update = send_update
         self._sessions: dict[str, _Session] = {}
+        self._admission_lock = asyncio.Lock()
+        self._starting_sessions = 0
         self._closing = False
 
     async def initialize(self, *, protocol_version: int) -> InitializeResponse:
@@ -200,7 +217,7 @@ class AgyAgent:
         mcp_servers: list[object],
         additional_directories: list[str] | None = None,
     ) -> NewSessionResponse:
-        if self._closing or mcp_servers or additional_directories:
+        if mcp_servers or additional_directories:
             raise _invalid_params()
         workspace = Path(cwd)
         if not workspace.is_absolute() or not workspace.is_dir():
@@ -216,23 +233,89 @@ class AgyAgent:
             cancel_grace=self._config.cancel_grace,
             kill_grace=self._config.kill_grace,
         )
+        await self._reserve_session()
+        reserved = True
         try:
-            process = await AgyProcess.launch(process_config)
-        except BackendTimeoutError:
-            raise AcpRequestError(-32011, "Initialization timed out") from None
-        except BackendProcessError:
-            raise _backend_unavailable() from None
+            try:
+                process = await AgyProcess.launch(process_config)
+            except BackendTimeoutError:
+                raise AcpRequestError(-32011, "Initialization timed out") from None
+            except BackendProcessError:
+                raise _backend_unavailable() from None
+            try:
+                if Path(process.init_event.cwd).resolve() != workspace.resolve():
+                    raise _backend_unavailable()
+                session_id = process.init_event.conversation_id
+                async with self._admission_lock:
+                    if self._closing or session_id in self._sessions:
+                        raise _backend_unavailable()
+                    self._sessions[session_id] = _Session(process)
+                    self._starting_sessions -= 1
+                    reserved = False
+                return NewSessionResponse(session_id=session_id)
+            except BaseException:
+                await process.close()
+                raise
+        finally:
+            if reserved:
+                async with self._admission_lock:
+                    self._starting_sessions -= 1
+
+    async def _reserve_session(self) -> None:
+        async with self._admission_lock:
+            if self._closing:
+                raise _backend_unavailable()
+            if len(self._sessions) + self._starting_sessions >= self._config.max_sessions:
+                raise AcpRequestError(-32014, "Session capacity exceeded")
+            self._starting_sessions += 1
+
+    def _remaining_prompt_time(self, deadline: float) -> float:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            raise BackendTimeoutError
+        return remaining
+
+    async def _send_prompt_before_deadline(
+        self,
+        session: _Session,
+        message: object,
+        deadline: float,
+    ) -> None:
         try:
-            if Path(process.init_event.cwd).resolve() != workspace.resolve():
-                raise _backend_unavailable()
-            session_id = process.init_event.conversation_id
-            if session_id in self._sessions:
-                raise _backend_unavailable()
-            self._sessions[session_id] = _Session(process)
-            return NewSessionResponse(session_id=session_id)
-        except BaseException:
-            await process.close()
-            raise
+            async with asyncio.timeout(self._remaining_prompt_time(deadline)):
+                await session.process.send(message)
+        except TimeoutError:
+            raise BackendTimeoutError from None
+
+    async def _emit_delta_before_deadline(
+        self,
+        session_id: str,
+        message_id: str,
+        delta: str,
+        deadline: float,
+    ) -> None:
+        try:
+            async with asyncio.timeout(self._remaining_prompt_time(deadline)):
+                await self._emit_delta(session_id, message_id, delta)
+        except TimeoutError:
+            raise BackendTimeoutError from None
+
+    async def _verify_response_barrier(
+        self,
+        session: _Session,
+        deadline: float,
+    ) -> None:
+        try:
+            async with asyncio.timeout(self._remaining_prompt_time(deadline)):
+                await asyncio.sleep(self._config.response_barrier)
+        except TimeoutError:
+            raise BackendTimeoutError from None
+        if session.process.pending_events:
+            raise _backend_unavailable()
+
+    async def _terminate_session(self, session_id: str, session: _Session) -> None:
+        await session.process.cancel()
+        await self._retire_session(session_id, session)
 
     async def prompt(
         self,
@@ -257,26 +340,28 @@ class AgyAgent:
         streamed_bytes = 0
         deadline = asyncio.get_running_loop().time() + self._config.prompt_timeout
         try:
+            await asyncio.sleep(0)
+            if session.process.pending_events:
+                raise _backend_unavailable()
             try:
-                await session.process.send(
+                await self._send_prompt_before_deadline(
+                    session,
                     {
                         "event": "user",
                         "message": {
                             "role": "user",
                             "content": [{"type": "text", "text": message}],
                         },
-                    }
+                    },
+                    deadline,
                 )
             except ProtocolEncodingError:
                 raise _invalid_params() from None
             while True:
-                remaining = deadline - asyncio.get_running_loop().time()
-                if remaining <= 0:
-                    raise BackendTimeoutError
+                remaining = self._remaining_prompt_time(deadline)
                 event = await self._receive_or_cancel(session, remaining)
                 if event is None:
-                    await self._await_cancel_cleanup(session)
-                    return PromptResponse(stop_reason="cancelled")
+                    return await self._finish_cancellation(session_id, session)
                 if not isinstance(event, AgyStepUpdateEvent | AgyResultEvent):
                     raise _backend_unavailable()
                 if event.conversation_id != session_id:
@@ -287,33 +372,55 @@ class AgyAgent:
                         if streamed_bytes > self._config.max_line_bytes:
                             raise _backend_unavailable()
                         chunks.append(event.text_delta)
-                        await self._emit_delta(session_id, message_id, event.text_delta)
+                        await self._emit_delta_before_deadline(
+                            session_id,
+                            message_id,
+                            event.text_delta,
+                            deadline,
+                        )
                     continue
+                await self._verify_response_barrier(session, deadline)
                 return await self._complete_result(
                     session,
                     session_id,
                     message_id,
                     chunks,
                     event,
+                    deadline,
                 )
         except asyncio.CancelledError:
-            await session.process.cancel()
+            with contextlib.suppress(BackendProcessError):
+                await self._terminate_session(session_id, session)
             raise
         except BackendTimeoutError:
+            if self._is_cancelling(session):
+                return await self._finish_cancellation(session_id, session)
+            try:
+                await self._terminate_session(session_id, session)
+            except BackendProcessError:
+                raise _backend_unavailable() from None
             raise AcpRequestError(-32012, "Prompt timed out") from None
         except BackendProcessError:
             if self._is_cancelling(session):
+                return await self._finish_cancellation(session_id, session)
+            await self._retire_session(session_id, session)
+            raise _backend_unavailable() from None
+        except AcpRequestError as error:
+            if self._is_cancelling(session):
+                return await self._finish_cancellation(session_id, session)
+            if error.code != -32602:
                 try:
-                    await self._await_cancel_cleanup(session)
+                    await self._terminate_session(session_id, session)
                 except BackendProcessError:
                     raise _backend_unavailable() from None
-                return PromptResponse(stop_reason="cancelled")
-            raise _backend_unavailable() from None
-        except AcpRequestError:
-            await session.process.cancel()
             raise
         except Exception:
-            await session.process.cancel()
+            if self._is_cancelling(session):
+                return await self._finish_cancellation(session_id, session)
+            try:
+                await self._terminate_session(session_id, session)
+            except BackendProcessError:
+                raise _backend_unavailable() from None
             raise AcpRequestError(-32603, "Internal error") from None
         finally:
             session.active_prompt = None
@@ -356,6 +463,24 @@ class AgyAgent:
             raise BackendShutdownError
         await asyncio.shield(cleanup)
 
+    async def _retire_session(self, session_id: str, session: _Session) -> None:
+        async with self._admission_lock:
+            if self._sessions.get(session_id) is session:
+                self._sessions.pop(session_id)
+
+    async def _finish_cancellation(
+        self,
+        session_id: str,
+        session: _Session,
+    ) -> PromptResponse:
+        try:
+            await self._await_cancel_cleanup(session)
+        except BackendProcessError:
+            await self._retire_session(session_id, session)
+            raise _backend_unavailable() from None
+        await self._retire_session(session_id, session)
+        return PromptResponse(stop_reason="cancelled")
+
     @staticmethod
     def _is_cancelling(session: _Session) -> bool:
         return session.cancel_requested
@@ -367,9 +492,11 @@ class AgyAgent:
         message_id: str,
         chunks: list[str],
         event: AgyResultEvent,
+        deadline: float,
     ) -> PromptResponse:
         if self._is_cancelling(session):
-            await self._await_cancel_cleanup(session)
+            return await self._finish_cancellation(session_id, session)
+        if event.status is AgyResultStatus.CANCELED:
             return PromptResponse(stop_reason="cancelled")
         if event.status is not AgyResultStatus.SUCCESS:
             raise _backend_unavailable()
@@ -381,10 +508,16 @@ class AgyAgent:
         else:
             raise _backend_unavailable()
         if suffix:
-            await self._emit_delta(session_id, message_id, suffix)
+            await self._emit_delta_before_deadline(
+                session_id,
+                message_id,
+                suffix,
+                deadline,
+            )
+        if session.process.pending_events:
+            raise _backend_unavailable()
         if self._is_cancelling(session):
-            await self._await_cancel_cleanup(session)
-            return PromptResponse(stop_reason="cancelled")
+            return await self._finish_cancellation(session_id, session)
         return PromptResponse(stop_reason="end_turn")
 
     async def _emit_delta(self, session_id: str, message_id: str, delta: str) -> None:
@@ -403,6 +536,7 @@ class AgyAgent:
         cleanup = self._start_cancel_cleanup(session)
         session.cancel_event.set()
         await asyncio.shield(cleanup)
+        await self._retire_session(session_id, session)
 
     async def close(self) -> None:
         if self._closing:

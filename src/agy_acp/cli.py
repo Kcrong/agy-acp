@@ -15,17 +15,24 @@ from agy_acp.executable import AgyCommand, resolve_executable
 from agy_acp.protocol import AcpStdioServer
 
 _DEFAULT_MAX_LINE_BYTES = 4 * 1024 * 1024
+_DEFAULT_MAX_IN_FLIGHT = 256
 
 
 def positive_float(value: str) -> float:
-    parsed = float(value)
+    try:
+        parsed = float(value)
+    except (OverflowError, ValueError):
+        raise argparse.ArgumentTypeError("value must be positive and finite") from None
     if not math.isfinite(parsed) or parsed <= 0:
         raise argparse.ArgumentTypeError("value must be positive and finite")
     return parsed
 
 
 def positive_integer(value: str) -> int:
-    parsed = int(value)
+    try:
+        parsed = int(value)
+    except (OverflowError, ValueError):
+        raise argparse.ArgumentTypeError("value must be positive") from None
     if parsed <= 0:
         raise argparse.ArgumentTypeError("value must be positive")
     return parsed
@@ -58,6 +65,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=_DEFAULT_MAX_LINE_BYTES,
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--max-in-flight",
+        type=positive_integer,
+        default=_DEFAULT_MAX_IN_FLIGHT,
+        help=argparse.SUPPRESS,
+    )
     return parser
 
 
@@ -84,6 +97,7 @@ async def serve(arguments: argparse.Namespace) -> None:
         reader,
         writer,
         max_line_bytes=arguments.max_line_bytes,
+        max_in_flight=arguments.max_in_flight,
     )
     await server.serve()
 

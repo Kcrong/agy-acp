@@ -38,11 +38,14 @@ def test_hidden_server_options_parse_without_expanding_help() -> None:
             "12.5",
             "--max-line-bytes",
             "8192",
+            "--max-in-flight",
+            "4",
         ]
     )
     assert arguments.agy_path == "/absolute/agy"
     assert arguments.prompt_timeout == 12.5
     assert arguments.max_line_bytes == 8192
+    assert arguments.max_in_flight == 4
 
 
 @pytest.mark.parametrize(
@@ -52,6 +55,7 @@ def test_hidden_server_options_parse_without_expanding_help() -> None:
         ("--prompt-timeout", "inf"),
         ("--prompt-timeout", "0"),
         ("--max-line-bytes", "0"),
+        ("--max-in-flight", "0"),
     ],
 )
 def test_hidden_server_options_require_positive_finite_values(
@@ -61,3 +65,14 @@ def test_hidden_server_options_require_positive_finite_values(
     with pytest.raises(SystemExit) as raised:
         build_parser().parse_args([option, value])
     assert raised.value.code == 2
+
+
+def test_malformed_hidden_option_is_not_echoed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as raised:
+        build_parser().parse_args(["--prompt-timeout", "credential-sentinel"])
+    assert raised.value.code == 2
+    captured = capsys.readouterr()
+    assert "credential-sentinel" not in captured.err
+    assert "value must be positive and finite" in captured.err
