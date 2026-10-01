@@ -74,8 +74,8 @@ if MODE == "stderr":
 if MODE in {"descendant", "idle-exit-descendant"}:
     if MARKER_ROOT is None:
         raise SystemExit(9)
-    started = MARKER_ROOT / "descendant-started"
-    survived = MARKER_ROOT / "descendant-survived"
+    started = MARKER_ROOT / f"descendant-started-{os.getpid()}"
+    survived = MARKER_ROOT / f"descendant-survived-{os.getpid()}"
     code = (
         "import time; from pathlib import Path; "
         f"Path({str(started)!r}).write_text('started', encoding='utf-8'); "

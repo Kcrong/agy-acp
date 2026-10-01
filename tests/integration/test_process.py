@@ -155,23 +155,21 @@ async def test_ignored_graceful_signal_is_hard_killed(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_cancel_terminates_descendant_tree(tmp_path: Path) -> None:
     process = await AgyProcess.launch(config(tmp_path, "descendant", str(tmp_path)))
-    started = tmp_path / "descendant-started"
-    survived = tmp_path / "descendant-survived"
-    assert started.exists()
+    started = list(tmp_path.glob("descendant-started-*"))
+    assert len(started) == 1
 
     await process.cancel()
     await asyncio.sleep(1.4)
 
     assert process.closed
-    assert not survived.exists()
+    assert not list(tmp_path.glob("descendant-survived-*"))
 
 
 @pytest.mark.asyncio
 async def test_idle_root_exit_reaps_descendants_in_background(tmp_path: Path) -> None:
     process = await AgyProcess.launch(config(tmp_path, "idle-exit-descendant", str(tmp_path)))
-    started = tmp_path / "descendant-started"
-    survived = tmp_path / "descendant-survived"
-    assert started.exists()
+    started = list(tmp_path.glob("descendant-started-*"))
+    assert len(started) == 1
 
     async with asyncio.timeout(2):
         while not process.closed:
@@ -179,7 +177,7 @@ async def test_idle_root_exit_reaps_descendants_in_background(tmp_path: Path) ->
     await asyncio.sleep(1.4)
 
     assert process.returncode == 0
-    assert not survived.exists()
+    assert not list(tmp_path.glob("descendant-survived-*"))
 
 
 @pytest.mark.asyncio
