@@ -112,6 +112,58 @@ def test_resolve_mcp_servers_rejects_unsafe_command_without_echo(command: str) -
     assert command not in str(raised.value)
 
 
+def test_safe_launcher_flags_retain_user_site_lookup(tmp_path: Path) -> None:
+    base_executable = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    home.mkdir()
+    workspace.mkdir()
+    environment = dict(os.environ)
+    environment["HOME"] = str(home)
+    environment["PYTHONHOME"] = str(tmp_path / "hostile-home")
+    environment["PYTHONPATH"] = str(workspace)
+    query = subprocess.run(
+        [
+            str(base_executable),
+            "-E",
+            "-P",
+            "-c",
+            "import site; print(site.ENABLE_USER_SITE); print(site.getusersitepackages())",
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    lines = query.stdout.splitlines()
+    assert query.returncode == 0
+    assert lines[0] == "True"
+    user_site = Path(lines[1])
+    package = user_site / "agy_acp"
+    source_package = Path(__file__).parents[2] / "src" / "agy_acp"
+    package.parent.mkdir(parents=True)
+    shutil.copytree(source_package, package)
+    hostile = workspace / "agy_acp"
+    hostile.mkdir()
+    (hostile / "__init__.py").write_text("", encoding="utf-8")
+    (hostile / "mcp_launcher.py").write_text("raise SystemExit(91)\n", encoding="utf-8")
+
+    completed = subprocess.run(
+        [str(base_executable), "-E", "-P", "-m", "agy_acp.mcp_launcher", "INVALID_SLOT"],
+        cwd=workspace,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+    assert completed.returncode == 127
+    assert completed.stdout == ""
+    assert completed.stderr == ""
+
+
 def test_generation_config_contains_no_client_spec_values(tmp_path: Path) -> None:
     manager = McpWorkspaceManager(temp_parent=tmp_path)
     specs = parse_mcp_servers(
@@ -218,7 +270,7 @@ def test_launcher_execs_target_with_only_own_server_environment(tmp_path: Path) 
 
 
 def test_manager_scavenges_unlocked_stale_owner_root(tmp_path: Path) -> None:
-    stale = tmp_path / "agy-acp-mcp-owner-stale"
+    stale = tmp_path / ("agy-acp-mcp-owner-" + "a" * 32)
     stale.mkdir(mode=0o700)
     lease = stale / ".lease"
     lease.write_text("", encoding="utf-8")
@@ -248,9 +300,44 @@ def test_manager_canonicalizes_safe_parent_and_rejects_unsafe_shared_parent(
     with pytest.raises(McpHandoffError, match="MCP handoff failed"):
         McpWorkspaceManager(temp_parent=unsafe)
 
+    unsafe_ancestor = tmp_path / "unsafe-ancestor"
+    unsafe_ancestor.mkdir()
+    unsafe_ancestor.chmod(0o777)
+    nested_private = unsafe_ancestor / "private"
+    nested_private.mkdir(mode=0o700)
+    manager = McpWorkspaceManager(temp_parent=nested_private)
+    original_parent = unsafe_ancestor / "original-private"
+    nested_private.rename(original_parent)
+    nested_private.mkdir(mode=0o700)
+    with pytest.raises(McpHandoffError, match="MCP handoff failed"):
+        manager.prepare(parse_mcp_servers([raw_server()]))
+    assert not list(nested_private.iterdir())
+    nested_private.rmdir()
+    original_parent.rename(nested_private)
+    manager.close()
+
+
+def test_manager_caps_stale_candidate_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for index in range(129):
+        (tmp_path / f"agy-acp-mcp-owner-{index:032x}").mkdir()
+    examined: list[str] = []
+
+    def record_candidate(_manager: McpWorkspaceManager, candidate_name: str) -> None:
+        examined.append(candidate_name)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(McpWorkspaceManager, "_scavenge_candidate", record_candidate)
+        manager = McpWorkspaceManager(temp_parent=tmp_path)
+
+    assert len(examined) == 128
+    manager.close()
+
 
 def test_manager_skips_nonregular_stale_lease_without_blocking(tmp_path: Path) -> None:
-    stale = tmp_path / "agy-acp-mcp-owner-fifo"
+    stale = tmp_path / ("agy-acp-mcp-owner-" + "b" * 32)
     stale.mkdir(mode=0o700)
     lease = stale / ".lease"
     os.mkfifo(lease, mode=0o600)

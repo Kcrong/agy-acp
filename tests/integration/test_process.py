@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -457,6 +458,83 @@ async def test_shutdown_callback_failure_is_fixed_retryable_and_once_only(
     assert process_is_closed()
     await process.close()
     assert cleanup_attempts() == 2
+
+
+@pytest.mark.asyncio
+async def test_cancelled_spawn_failure_is_bounded_and_diagnostic_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    cleanup_calls: list[None] = []
+    diagnostics: list[dict[str, object]] = []
+
+    async def fail_after_release(
+        _config: AgyProcessConfig,
+        _argv: tuple[str, ...],
+    ) -> asyncio.subprocess.Process:
+        entered.set()
+        await release.wait()
+        raise OSError("credential-sentinel")
+
+    process_config = replace(
+        config(tmp_path, "normal", init_timeout=0.5),
+        shutdown_callback=lambda: cleanup_calls.append(None),
+    )
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: diagnostics.append(context))
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(AgyProcess, "_spawn", staticmethod(fail_after_release))
+            launching = asyncio.create_task(AgyProcess.launch(process_config))
+            await entered.wait()
+            launching.cancel()
+            launching.cancel()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                async with asyncio.timeout(1):
+                    await launching
+        await asyncio.sleep(0)
+        assert cleanup_calls == [None]
+        assert diagnostics == []
+        assert not _active_process_tasks()
+    finally:
+        loop.set_exception_handler(previous_handler)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_never_finishing_spawn_stops_at_launch_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = asyncio.Event()
+    cleanup_calls: list[None] = []
+
+    async def never_finish(
+        _config: AgyProcessConfig,
+        _argv: tuple[str, ...],
+    ) -> asyncio.subprocess.Process:
+        entered.set()
+        await asyncio.Event().wait()
+        raise AssertionError
+
+    process_config = replace(
+        config(tmp_path, "normal", init_timeout=0.05),
+        shutdown_callback=lambda: cleanup_calls.append(None),
+    )
+    with monkeypatch.context() as patch:
+        patch.setattr(AgyProcess, "_spawn", staticmethod(never_finish))
+        launching = asyncio.create_task(AgyProcess.launch(process_config))
+        await entered.wait()
+        launching.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            async with asyncio.timeout(1):
+                await launching
+
+    assert cleanup_calls == [None]
+    assert not _active_process_tasks()
 
 
 @pytest.mark.asyncio

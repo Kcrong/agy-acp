@@ -177,7 +177,7 @@ async def test_mcp_starts_lazily_and_active_config_lives_until_cancel(
     config_text = config.read_text(encoding="utf-8")
     config_payload = json.loads(config_text)
     launch = next(iter(config_payload["mcpServers"].values()))
-    assert launch["args"][:3] == ["-I", "-m", "agy_acp.mcp_launcher"]
+    assert launch["args"][:4] == ["-E", "-P", "-m", "agy_acp.mcp_launcher"]
     assert secret not in config_text
     assert "project-name-collision" not in config_text
     assert stat.S_IMODE(active_roots[0].stat().st_mode) == 0o700
