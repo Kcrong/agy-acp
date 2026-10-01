@@ -135,7 +135,7 @@ If no safe handoff exists in the current `agy` interface, release remains blocke
 ## Cross-platform process policy
 
 - Linux and macOS start `agy` in a new process session and signal the process group.
-- Windows starts `agy` in a new process group and uses a tested process-tree termination strategy.
+- Windows starts a delayed bootstrap in a new process group, attaches it to a kill-on-close Job Object before releasing `agy`, and closes the Job handle to terminate remaining descendants.
 - Persistent `agy` processes run without print-mode or child timeout flags; `AgyProcess` owns all deadlines.
 - Graceful termination is attempted first.
 - Hard termination is bounded and awaited before a lifecycle is considered closed.
