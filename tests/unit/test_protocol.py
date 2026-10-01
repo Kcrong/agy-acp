@@ -187,3 +187,69 @@ async def test_protocol_requires_positive_write_timeout_without_echo(
             write_timeout=cast(float, invalid),
         )
     assert "sentinel" not in str(raised.value)
+
+
+class FailingWriter(BlockingWriter):
+    def write(self, data: bytes) -> None:
+        del data
+        raise OSError
+
+
+@pytest.mark.asyncio
+async def test_write_timeout_never_emits_two_terminal_records() -> None:
+    reader = asyncio.StreamReader()
+    writer = BlockingWriter()
+    server = AcpStdioServer(
+        await make_agent(),
+        reader,
+        cast(asyncio.StreamWriter, writer),
+        max_line_bytes=4096,
+        write_timeout=0.01,
+    )
+    serving = asyncio.create_task(server.serve())
+    reader.feed_data(
+        b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}\n'
+    )
+
+    async with asyncio.timeout(1):
+        await serving
+    records = [json.loads(line) for line in writer.data.splitlines()]
+    assert len(records) == 1
+    assert records[0]["id"] == 1
+    assert "result" in records[0]
+    assert writer.closed
+
+
+@pytest.mark.asyncio
+async def test_synchronous_write_failure_closes_without_second_response() -> None:
+    reader = asyncio.StreamReader()
+    writer = FailingWriter()
+    server = AcpStdioServer(
+        await make_agent(),
+        reader,
+        cast(asyncio.StreamWriter, writer),
+        max_line_bytes=4096,
+    )
+    serving = asyncio.create_task(server.serve())
+    reader.feed_data(
+        b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}\n'
+    )
+
+    async with asyncio.timeout(1):
+        await serving
+    assert writer.data == b""
+    assert writer.closed
+
+
+@pytest.mark.asyncio
+async def test_protocol_rejects_unsafe_request_buffer_product() -> None:
+    reader = asyncio.StreamReader()
+    writer = cast(asyncio.StreamWriter, BlockingWriter())
+    with pytest.raises(ValueError, match="combined request buffer limits are unsafe"):
+        AcpStdioServer(
+            await make_agent(),
+            reader,
+            writer,
+            max_line_bytes=4 * 1024 * 1024,
+            max_in_flight=17,
+        )

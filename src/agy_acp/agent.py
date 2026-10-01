@@ -33,7 +33,6 @@ from agy_acp import __version__
 from agy_acp.config import AgyProcessConfig
 from agy_acp.errors import (
     AcpRequestError,
-    BackendExitedError,
     BackendProcessError,
     BackendShutdownError,
     BackendTimeoutError,
@@ -44,6 +43,7 @@ from agy_acp.executable import AgyCommand
 from agy_acp.process import AgyProcess
 
 UpdateSender = Callable[[str, dict[str, object]], Awaitable[None]]
+_MAX_BUFFERED_EVENT_BYTES = 128 * 1024 * 1024
 
 
 def _positive_integer(name: str, value: object) -> None:
@@ -67,7 +67,7 @@ class AgentConfig:
     command: AgyCommand
     max_line_bytes: int = 4 * 1024 * 1024
     max_stderr_bytes: int = 64 * 1024
-    max_pending_events: int = 256
+    max_pending_events: int = 2
     max_sessions: int = 16
     init_timeout: float = 15.0
     write_timeout: float = 15.0
@@ -93,6 +93,9 @@ class AgentConfig:
             "kill_grace",
         ):
             _positive_seconds(name, getattr(self, name))
+        retained_event_bytes = self.max_line_bytes * self.max_pending_events * self.max_sessions
+        if retained_event_bytes > _MAX_BUFFERED_EVENT_BYTES:
+            raise ValueError("combined event buffer limits are unsafe")
 
 
 @dataclass(slots=True)
@@ -308,9 +311,10 @@ class AgyAgent:
                 if not session_id or "\x00" in session_id:
                     raise _backend_unavailable()
                 try:
-                    await process.close()
+                    await process.retire()
                 except BackendProcessError:
-                    self._orphaned_processes.add(process)
+                    if not process.closed:
+                        self._orphaned_processes.add(process)
                     raise _backend_unavailable() from None
                 async with self._admission_lock:
                     if self._closing or session_id in self._sessions:
@@ -481,14 +485,16 @@ class AgyAgent:
             session.process = None
         try:
             async with asyncio.timeout(self._remaining_prompt_time(deadline)):
-                await process.close()
+                await process.retire()
         except TimeoutError:
             raise BackendTimeoutError from None
         except BackendProcessError:
-            await self._mark_unusable(session_id, session, process)
+            if process.closed:
+                session.cancel_cleanup = None
+                session.cancel_process = None
+            else:
+                await self._mark_unusable(session_id, session, process)
             raise
-        if process.returncode is not None and process.returncode > 0:
-            raise BackendExitedError
         session.cancel_cleanup = None
         session.cancel_process = None
 
@@ -574,8 +580,6 @@ class AgyAgent:
                             deadline,
                         )
                     continue
-                if process.pending_events:
-                    raise _backend_unavailable()
                 return await self._complete_result(
                     session,
                     session_id,
@@ -736,8 +740,6 @@ class AgyAgent:
                 suffix,
                 deadline,
             )
-        if process.pending_events:
-            raise _backend_unavailable()
         if self._is_cancelling(session):
             return await self._finish_cancellation(session_id, session)
         await self._close_generation(session_id, session, process, deadline)
@@ -776,11 +778,7 @@ class AgyAgent:
             session.cancel_requested = True
         cleanup = self._start_cancel_cleanup(session)
         session.cancel_event.set()
-        if (
-            cleanup is None
-            and active_prompt is not None
-            and active_prompt is not asyncio.current_task()
-        ):
+        if active_prompt is not None and active_prompt is not asyncio.current_task():
             active_prompt.cancel()
         barrier = asyncio.create_task(
             self._wait_for_close_parts(
@@ -820,9 +818,9 @@ class AgyAgent:
         session.cancel_requested = True
         cleanup = self._start_cancel_cleanup(session)
         session.cancel_event.set()
+        if active_prompt is not asyncio.current_task():
+            active_prompt.cancel()
         if cleanup is None:
-            if active_prompt is not asyncio.current_task():
-                active_prompt.cancel()
             return
         try:
             await asyncio.shield(cleanup)

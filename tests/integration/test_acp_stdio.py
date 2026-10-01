@@ -693,3 +693,45 @@ async def test_stdio_request_cancelled_close_finishes_cleanup(tmp_path: Path) ->
         "message": "Session not found",
     }
     await stop_server(process)
+
+
+@pytest.mark.asyncio
+async def test_stdio_rejects_nul_session_ids_without_echo(tmp_path: Path) -> None:
+    process = await start_server(tmp_path, "normal")
+    await initialize(process)
+    bad_session_id = "credential\x00sentinel"
+    for request_id, method, extra in (
+        (2, "session/prompt", {"prompt": [{"type": "text", "text": "hello"}]}),
+        (3, "session/close", {}),
+    ):
+        await send(
+            process,
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": {"sessionId": bad_session_id, **extra},
+            },
+        )
+        response = await receive(process)
+        assert response["error"] == {"code": -32602, "message": "Invalid params"}
+        assert "sentinel" not in json.dumps(response)
+
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "method": "session/cancel",
+            "params": {"sessionId": bad_session_id},
+        },
+    )
+    await send(
+        process,
+        {"jsonrpc": "2.0", "id": 4, "method": "unknown", "params": {}},
+    )
+    assert await receive(process) == {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "error": {"code": -32601, "message": "Method not found"},
+    }
+    await stop_server(process)

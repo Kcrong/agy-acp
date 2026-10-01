@@ -15,6 +15,7 @@ from agy_acp.errors import (
     LineTooLongError,
     NdjsonError,
     NonObjectError,
+    ProtocolWriteError,
 )
 from agy_acp.ndjson import NdjsonParser
 from agy_acp.transport import encode_json_line
@@ -22,6 +23,7 @@ from agy_acp.transport import encode_json_line
 __all__ = ["AcpRequestError", "AcpStdioServer"]
 
 RequestId = int | str
+_MAX_IN_FLIGHT_REQUEST_BYTES = 64 * 1024 * 1024
 
 
 def _invalid_request() -> AcpRequestError:
@@ -67,7 +69,7 @@ def _same_json_shape(left: object, right: object) -> bool:
 
 def _required_string(values: Mapping[str, object], key: str) -> str:
     value = values.get(key)
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value or "\x00" in value:
         raise _invalid_params()
     return value
 
@@ -89,7 +91,7 @@ class AcpStdioServer:
         *,
         max_line_bytes: int,
         write_timeout: float = 15.0,
-        max_in_flight: int = 256,
+        max_in_flight: int = 16,
     ) -> None:
         if type(max_line_bytes) is not int or max_line_bytes <= 0:
             raise ValueError("max_line_bytes must be a positive integer")
@@ -103,6 +105,8 @@ class AcpStdioServer:
             raise ValueError("write_timeout must be positive and finite")
         if type(max_in_flight) is not int or max_in_flight <= 0:
             raise ValueError("max_in_flight must be a positive integer")
+        if max_line_bytes * max_in_flight > _MAX_IN_FLIGHT_REQUEST_BYTES:
+            raise ValueError("combined request buffer limits are unsafe")
         self._agent = agent
         self._reader = reader
         self._writer = writer
@@ -110,15 +114,40 @@ class AcpStdioServer:
         self._write_timeout = write_timeout
         self._max_in_flight = max_in_flight
         self._write_lock = asyncio.Lock()
+        self._output_failed = asyncio.Event()
         self._requests: dict[RequestId, asyncio.Task[None]] = {}
         self._initialized = False
         self._closing = False
+
+    async def _read_chunk(self) -> bytes:
+        reading = asyncio.create_task(
+            self._reader.read(min(64 * 1024, self._max_line_bytes + 1)),
+            name="agy-acp.input-read",
+        )
+        output_failed = asyncio.create_task(
+            self._output_failed.wait(),
+            name="agy-acp.output-failure-wait",
+        )
+        try:
+            done, _pending = await asyncio.wait(
+                (reading, output_failed),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if output_failed in done:
+                reading.cancel()
+                await asyncio.gather(reading, return_exceptions=True)
+                return b""
+            return reading.result()
+        finally:
+            if not output_failed.done():
+                output_failed.cancel()
+            await asyncio.gather(output_failed, return_exceptions=True)
 
     async def serve(self) -> None:
         parser = NdjsonParser(max_line_bytes=self._max_line_bytes)
         discarding_oversized_record = False
         try:
-            while chunk := await self._reader.read(min(64 * 1024, self._max_line_bytes + 1)):
+            while chunk := await self._read_chunk():
                 offset = 0
                 while offset < len(chunk):
                     newline = chunk.find(b"\n", offset)
@@ -142,7 +171,7 @@ class AcpStdioServer:
                         continue
                     for message in messages:
                         await self._accept(message)
-            if not discarding_oversized_record:
+            if not discarding_oversized_record and not self._output_failed.is_set():
                 try:
                     parser.finish()
                 except NdjsonError as error:
@@ -407,13 +436,27 @@ class AcpStdioServer:
         )
 
     async def _send(self, message: dict[str, object]) -> None:
+        if self._output_failed.is_set():
+            raise ProtocolWriteError
         if self._closing:
             return
         encoded = encode_json_line(message, max_line_bytes=self._max_line_bytes)
-        async with self._write_lock:
-            self._writer.write(encoded)
-            async with asyncio.timeout(self._write_timeout):
-                await self._writer.drain()
+        try:
+            async with self._write_lock:
+                if self._output_failed.is_set():
+                    raise ProtocolWriteError
+                self._writer.write(encoded)
+                async with asyncio.timeout(self._write_timeout):
+                    await self._writer.drain()
+        except asyncio.CancelledError:
+            raise
+        except ProtocolWriteError:
+            raise
+        except Exception:
+            self._output_failed.set()
+            with contextlib.suppress(Exception):
+                self._writer.close()
+            raise ProtocolWriteError from None
 
     async def _close(self) -> None:
         if self._closing:

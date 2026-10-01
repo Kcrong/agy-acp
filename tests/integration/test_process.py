@@ -261,6 +261,7 @@ async def test_write_timeout_closes_nonreading_backend(tmp_path: Path) -> None:
             tmp_path,
             "no-read",
             max_line_bytes=8 * 1024 * 1024,
+            max_pending_events=1,
             write_timeout=0.05,
         )
     )
@@ -278,6 +279,7 @@ async def test_cancelled_backpressured_send_closes_backend(tmp_path: Path) -> No
             tmp_path,
             "no-read",
             max_line_bytes=8 * 1024 * 1024,
+            max_pending_events=1,
             write_timeout=5,
         )
     )
@@ -299,6 +301,7 @@ async def test_close_is_bounded_during_backpressured_send(tmp_path: Path) -> Non
             tmp_path,
             "no-read",
             max_line_bytes=8 * 1024 * 1024,
+            max_pending_events=1,
             write_timeout=5,
         )
     )
@@ -362,13 +365,17 @@ async def test_fault_cleanup_exception_is_observed_without_payload(tmp_path: Pat
         raise RuntimeError("credential-sentinel")
 
     cleanup = asyncio.create_task(fail_cleanup())
+    process._fault_cleanup = cleanup
     cleanup.add_done_callback(process._observe_fault_cleanup)
     await asyncio.sleep(0)
     await asyncio.sleep(0)
 
     assert process.fault_cleanup_failed
     assert cleanup.done()
+    assert not process.fault_cleanup_active
     await process.close()
+    await process.close()
+    assert process.closed
 
 
 @pytest.mark.asyncio
