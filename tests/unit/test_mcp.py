@@ -367,17 +367,34 @@ def test_manager_caps_total_nonmatching_entries(
 ) -> None:
     for index in range(129):
         (tmp_path / f"unrelated-{index:032x}").touch()
-    examined: list[str] = []
+    pulls: list[None] = []
+    original_scandir = os.scandir
 
-    def reject_name(name: str) -> bool:
-        examined.append(name)
-        return False
+    class CountingEntries:
+        def __init__(self, entries: Any) -> None:
+            self._entries = entries
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            self._entries.close()
+
+        def __iter__(self) -> Any:
+            return self
+
+        def __next__(self) -> Any:
+            pulls.append(None)
+            return next(self._entries)
+
+    def counting_scandir(path: Any) -> CountingEntries:
+        return CountingEntries(original_scandir(path))
 
     with monkeypatch.context() as patch:
-        patch.setattr("agy_acp.mcp._is_owner_name", reject_name)
+        patch.setattr("agy_acp.mcp.os.scandir", counting_scandir)
         manager = McpWorkspaceManager(temp_parent=tmp_path)
 
-    assert len(examined) == 128
+    assert len(pulls) == 128
     manager.close()
 
 
