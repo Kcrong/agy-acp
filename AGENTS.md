@@ -17,7 +17,15 @@ This document applies to all implementation and modification work within the `ag
 - If such a document is already tracked, remove it from Git tracking without deleting the local working copy.
 - Commit durable product requirements, architecture decisions, and user-facing documentation only when they are intended repository artifacts rather than transient work trackers.
 
-## 3. PR Title and Body
+## 3. Dependency and Action Versions
+
+- Prefer the latest stable releases of dependencies and GitHub Actions when they are compatible, to minimize exposure to known vulnerabilities.
+- Pin npm dependencies to exact versions and GitHub Actions to full commit SHAs with the corresponding release tag in a comment.
+- Before adopting a new major release, review its release age, changelog, advisories, peer/runtime compatibility, and full test results.
+- If the newest major is recently released, unstable, or not yet supported by the surrounding ecosystem, use the latest stable release from the previous compatible major and document the reason.
+- Do not use prerelease versions by default.
+
+## 4. PR Title and Body
 
 - Write the PR title concisely in English.
 - Write the PR body in English.
@@ -36,7 +44,7 @@ This document applies to all implementation and modification work within the `ag
 
 * In the `How tested` section, record the actual tests executed, their results, and artefacts such as screenshots if it possible.
 
-## 4. Functional Testing
+## 5. Functional Testing
 
 * Prioritize verifying the reliability of the feature.
 * Utilize end-to-end tests as much as possible to verify actual user flows.
@@ -45,7 +53,7 @@ This document applies to all implementation and modification work within the `ag
 * Use unit and integration tests to supplement end-to-end tests.
 * Record the executed test commands and results in the PR body.
 
-## 5. Git commit message
+## 6. Git commit message
 
 * Use the Conventional Commits format for all commit messages.
 
