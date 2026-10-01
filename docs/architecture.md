@@ -151,10 +151,12 @@ No platform is advertised unless its hosted matrix and process-tree tests pass.
 
 ## CI policy
 
-CI uses only standard GitHub-hosted runners in a four-cell matrix:
+CI uses only standard GitHub-hosted runners in a four-cell matrix and runs the test jobs only for pull requests whose current state is ready for review. Draft revisions and pushes to `main` do not allocate test jobs. Branch protection requires all four current-head checks before `main` can be merged:
 
 - `ubuntu-latest`: Python 3.13 and 3.14
 - `macos-latest`: Python 3.13 and 3.14
+
+Required status checks are bound to the GitHub Actions app and enforced for administrators. The protection policy intentionally requires no human approval; repository write access is therefore a trusted boundary, and a trusted writer can propose workflow changes that alter what those checks execute.
 
 If a `latest` label points to a preview image, the workflow pins the newest stable generally available image instead.
 
@@ -166,7 +168,7 @@ Selected Actions:
 | `actions/setup-python` | `v7.0.0` | `5fda3b95a4ea91299a34e894583c3862153e4b97` | Node 24 |
 | `astral-sh/setup-uv` | `v10.2.0` | `c18668ad3cf93ea998bef934396af7bb5c839dc7` | Node 24 |
 
-The future workflow must pin uv `0.12.21`, install from `uv.lock` with frozen resolution, grant read-only repository permissions, and expose no repository secrets to pull-request code.
+The workflow pins uv `0.12.21`, installs from `uv.lock` with frozen resolution, grants read-only repository permissions, and exposes no repository secrets to pull-request code.
 
 ## Validation layers
 

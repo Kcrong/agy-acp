@@ -21,12 +21,12 @@ uv run --frozen pytest
 uv build --no-build-isolation
 ```
 
-CI repeats these gates on every supported OS/Python combination and additionally verifies installation from the pushed exact Git revision.
+CI repeats these gates on every supported OS/Python combination only while a pull request is ready for review, then verifies installation from that exact pushed revision. Draft pushes and `main` pushes do not run the test matrix.
 
 Add focused unit and end-to-end coverage for success, failure, cancellation, cleanup, and boundary behavior. Linux and macOS support must remain equivalent; do not add Windows support claims without a reviewed platform decision.
 
 ## Changes and review
 
-Create a focused feature branch from current `main`, use Conventional Commits, and open a concise English pull request with `What for`, `What changed`, `Why`, and `How tested` sections. Do not push directly to `main`. Address review findings and pass all supported CI cells before merge.
+Create a focused feature branch from current `main`, use Conventional Commits, and open the pull request as a draft while revisions are still being pushed. Mark it ready for review only when the full CI matrix should run. Use concise English `What for`, `What changed`, `Why`, and `How tested` sections. Do not push directly to `main`. Address review findings and pass all supported CI cells before merge.
 
 Never commit secrets, credentials, private endpoints, personal data, raw prompts or responses, conversation identifiers, environment dumps, machine-specific configuration, or transient planning files. Follow `SECURITY.md` for vulnerability reports.

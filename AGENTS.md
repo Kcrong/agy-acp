@@ -8,6 +8,8 @@ This document applies to all implementation and modification work within the `ag
 - Create a feature branch from the latest default branch before modification work.
 - Explicitly name the feature branch when pushing.
 - Merge changes only through a pull request after review and required verification.
+- Keep a pull request in draft while pushing work-in-progress revisions; mark it ready for review only when the full CI matrix should run.
+- A new revision on an already-ready pull request reruns the required checks; return it to draft before iterative pushes that should not allocate runners.
 - Address review findings and complete the relevant checks before merging.
 
 ## 2. Maintainer Ownership and Explanations
@@ -34,6 +36,8 @@ This document applies to all implementation and modification work within the `ag
 - Do not claim Windows support or add Windows GitHub Actions jobs unless the platform requirements are intentionally revised through a reviewed change.
 - Support the two newest stable Python 3 feature releases (`3.N` and `3.(N-1)`) on every supported operating system.
 - Run GitHub Actions only on standard GitHub-hosted Ubuntu and macOS runners.
+- Run the test workflow only for pull requests that are ready for review; draft pushes and `main` pushes must not allocate test jobs.
+- Protect `main` so its current pull-request head must pass all four Ubuntu/macOS and Python 3.13/3.14 checks before merge.
 - Standard runners are free for public repositories, but workflows must remain within GitHub's job-duration, concurrency, and storage limits.
 - Do not use larger runners unless the platform requirements are intentionally revised through a reviewed change.
 - Keep dependency installation project-local. Do not require global installation or `sudo` for development and verification.

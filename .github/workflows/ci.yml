@@ -2,9 +2,15 @@ name: CI
 
 on:
   pull_request:
-  push:
     branches:
       - main
+    types:
+      - closed
+      - converted_to_draft
+      - opened
+      - ready_for_review
+      - reopened
+      - synchronize
 
 permissions:
   contents: read
@@ -15,6 +21,7 @@ concurrency:
 
 jobs:
   test:
+    if: ${{ github.event.action != 'closed' && github.event.pull_request.draft == false }}
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
