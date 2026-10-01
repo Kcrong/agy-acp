@@ -88,7 +88,7 @@
 - [x] 전체 Git history, tracked files, package tarball, Actions logs·artifacts를 redacted/count-only 방식으로 검사했습니다. Critical·High secret finding 0이며 23 runs/92 jobs는 executed steps·logs·artifacts 0입니다.
 - [ ] Inherited root `21334d1`의 machine-derived identity를 제거할 default-history replacement 절차와 rollback ref를 준비하고 별도 explicit approval을 받습니다.
 - [ ] Public 전환 전에 default branch ruleset에 required hosted checks와 approving review 1개를 추가하고, 전환 후 deletion·non-fast-forward·squash-only PR 보호와 함께 active인지 재검증합니다. GitHub가 자동 disable하는 대상은 별도 push rulesets입니다.
-- [ ] Actions quota 복구 후 Linux Node 22/24, macOS Node 22, Windows Node 22 hosted matrix가 실제 runner에서 통과합니다.
+- [x] Actions capacity 복구 후 [PR #5](https://github.com/Kcrong/agy-acp/pull/5) run `36798755644`에서 Linux Node 22/24, macOS Node 22, Windows Node 22 hosted matrix가 모두 실제 runner에서 통과했습니다.
 - [x] Public repository community profile, `SECURITY.md`, license, contribution docs, issue settings와 package metadata를 독립 검토했습니다.
 - [x] Public-readiness 변경을 concise English [PR #4](https://github.com/Kcrong/agy-acp/pull/4)로 제출하고 Critical·High finding 0과 local/package/real smoke를 확보한 뒤 merge했습니다.
 - [ ] Explicit visibility approval 후 repository를 public으로 전환하고 visibility, ruleset, secret scanning, push protection, private vulnerability reporting을 재검증합니다.

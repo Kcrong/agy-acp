@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: public-release readiness loop round 4 — external and human launch gates
+- 현재 단계: public-release readiness loop round 5 — hosted CI green; human launch gates
 - 작업 branch: `chore/public-launch-gates`
 - merged baseline: PR #4, `main` `6c51778`
 - repository state: PRIVATE. Public visibility 전환과 default-history replacement는 마지막 human-only gate입니다.
-- 다음 작업: Actions capacity 복구를 주기적으로 확인하고, hosted green 이후 root metadata·eligible reviewer·visibility를 하나의 explicit launch decision으로 요청합니다.
+- 다음 작업: PR #5를 final review·merge한 뒤 root metadata 수용 방식, required-review policy, visibility 전환을 하나의 explicit launch decision으로 요청합니다.
 - 완료 조건: secret·machine data scan clean, hosted multi-OS gate, independent public-readiness review, readiness PR merge, explicit visibility approval, post-public ruleset/security verification. npm publish는 별도 explicit release gate입니다.
 
 ## 조사 메모
@@ -188,7 +188,7 @@
 
 ## 대기
 
-- [ ] GitHub Actions 실행: 사용량이 복구될 때까지 실행 전 quota 실패는 허용하되 workflow는 작성합니다.
+- [x] GitHub Actions capacity가 복구됐고 [PR #5](https://github.com/Kcrong/agy-acp/pull/5) run `36798755644`에서 hosted matrix 4개 job이 실제 runner에서 통과했습니다.
 
 ## Public readiness loop
 
@@ -200,7 +200,8 @@
 - [x] Package `@kcrong/agy-acp@0.1.0`은 Apache-2.0·public publish config이지만 `private:true` guard를 유지합니다.
 - [x] Independent public-exposure audit: 65 retained source revisions, 63 trees, 210 text blobs, 3 PRs, 23 Actions runs/92 jobs, simulated 24-file package를 count-only/redacted scan했습니다.
 - [x] Secret exposure Critical 0, High 0. Executed Actions steps·logs·artifacts는 모두 0이며 모든 jobs가 runner 미할당 상태입니다.
-- [ ] Medium: hosted CI를 실제 runner에서 통과시키고 default branch ruleset에 required checks와 approving review 1개를 추가합니다.
+- [x] Hosted CI: [PR #5](https://github.com/Kcrong/agy-acp/pull/5) run `36798755644`에서 Ubuntu Node 22/24, macOS Node 22, Windows Node 22가 모두 non-zero runner를 배정받아 성공했습니다.
+- [ ] Medium: default branch ruleset에 required checks와 approving review 1개를 추가합니다. Owner 외 eligible reviewer가 0명이므로 사용자 결정 전에는 적용하지 않습니다.
 - [x] Future ruleset payload를 4 hosted check contexts, approval 1, stale dismissal, last-push approval, thread resolution으로 dry-run 검증했습니다. CI green과 eligible reviewer 확보 전에는 적용하지 않습니다.
 - [x] Current branch full validation: unit 98/98, mock E2E 8/8, package smoke, real `agy` 1/1, lint, typecheck, build 통과.
 - [x] `57aeb94` independent review: Critical 0, High 0, Medium 1, Low 1 — stale hosted-CI 완료 표기와 non-actionable conduct contact를 발견했습니다.
@@ -217,7 +218,7 @@
 - [x] Merged-main run `36746762176`도 4 jobs 모두 runner 미할당·steps 0으로 pre-allocation 실패했습니다.
 - [x] Owner 외 direct collaborator와 required-review eligible reviewer는 모두 0명입니다.
 - [x] Merged community profile은 100%이며 Code of Conduct, CONTRIBUTING, license, PR template, README가 인식되고 issue forms도 tracked 상태입니다.
-- [ ] Hosted matrix, default-history replacement, visibility flip, npm publish의 외부/human gates를 순서대로 처리합니다.
+- [ ] Default-history decision, required-review policy, visibility flip, npm publish의 human gates를 순서대로 처리합니다.
 
 ## 반복 운영 규칙
 
