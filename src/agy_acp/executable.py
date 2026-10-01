@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +19,33 @@ class AgyCommand:
             raise ValueError("prefix arguments must not contain NUL")
 
 
+def _executable_names(raw: str) -> tuple[str, ...]:
+    if os.name != "nt" or Path(raw).suffix:
+        return (raw,)
+    extensions = tuple(
+        extension
+        for extension in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep)
+        if extension.startswith(".")
+        and "/" not in extension
+        and "\\" not in extension
+        and "\x00" not in extension
+    )
+    return tuple(raw + extension for extension in extensions)
+
+
+def _find_bare_executable(raw: str, source_path: str) -> Path | None:
+    names = _executable_names(raw)
+    for entry in source_path.split(os.pathsep):
+        directory = Path(entry)
+        if not entry or not directory.is_absolute():
+            continue
+        for name in names:
+            candidate = directory / name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+    return None
+
+
 def resolve_executable(value: str | os.PathLike[str], *, path: str | None = None) -> Path:
     raw = os.fspath(value)
     if not raw or "\x00" in raw:
@@ -34,11 +60,7 @@ def resolve_executable(value: str | os.PathLike[str], *, path: str | None = None
         resolved = candidate
     else:
         source_path = os.environ.get("PATH", "") if path is None else path
-        absolute_entries = [
-            entry for entry in source_path.split(os.pathsep) if entry and Path(entry).is_absolute()
-        ]
-        found = shutil.which(raw, path=os.pathsep.join(absolute_entries))
-        resolved = Path(found) if found else None
+        resolved = _find_bare_executable(raw, source_path)
 
     try:
         if resolved is None:

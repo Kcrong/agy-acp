@@ -83,7 +83,9 @@ def test_build_argv_rejects_relative_additional_directory() -> None:
         ("max_line_bytes", 0),
         ("max_line_bytes", True),
         ("max_stderr_bytes", 1.5),
+        ("max_pending_events", 0),
         ("init_timeout", float("nan")),
+        ("write_timeout", float("inf")),
         ("cancel_grace", 0),
         ("kill_grace", float("inf")),
     ],
@@ -100,3 +102,24 @@ def test_process_config_requires_positive_finite_values(
     }
     with pytest.raises(ValueError, match="positive"):
         AgyProcessConfig(**values)  # type: ignore[arg-type]
+
+
+def test_bare_command_never_searches_current_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    name = "agy-probe.exe" if os.name == "nt" else "agy-probe"
+    candidate = tmp_path / name
+    if os.name == "nt":
+        import shutil
+
+        shutil.copy2(sys.executable, candidate)
+    else:
+        candidate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        candidate.chmod(0o755)
+    empty_path = tmp_path / "empty-path"
+    empty_path.mkdir()
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(ExecutableResolutionError, match="could not be resolved"):
+        resolve_executable(name, path=str(empty_path))
