@@ -76,6 +76,7 @@ class AgyProcess:
         self._init_event: AgyInitEvent | None = None
         self._fault_cleanup: asyncio.Task[None] | None = None
         self._fault_cleanup_failed = False
+        self._shutdown_callback_done = config.shutdown_callback is None
         self._stdout_task = asyncio.create_task(
             self._read_stdout(),
             name="agy-acp.stdout",
@@ -96,14 +97,18 @@ class AgyProcess:
         *,
         on_started: Callable[[AgyProcess], None] | None = None,
     ) -> AgyProcess:
-        argv = build_agy_argv(
-            config.command,
-            conversation_id=config.conversation_id,
-            additional_directories=config.additional_directories,
-        )
         try:
+            argv = build_agy_argv(
+                config.command,
+                conversation_id=config.conversation_id,
+                additional_directories=config.additional_directories,
+            )
             process = await cls._spawn(config, argv)
         except (OSError, RuntimeError, ValueError):
+            callback = config.shutdown_callback
+            if callback is not None:
+                with contextlib.suppress(Exception):
+                    callback()
             raise BackendStartError from None
         instance = cls(config, process)
         try:
@@ -127,12 +132,17 @@ class AgyProcess:
         config: AgyProcessConfig,
         argv: tuple[str, ...],
     ) -> asyncio.subprocess.Process:
+        environment: dict[str, str] | None = None
+        if config.environment_overrides:
+            environment = dict(os.environ)
+            environment.update(config.environment_overrides)
         return await asyncio.create_subprocess_exec(
             *argv,
             cwd=str(config.cwd),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=environment,
             limit=config.max_line_bytes + 1,
             start_new_session=True,
         )
@@ -156,7 +166,7 @@ class AgyProcess:
         tasks = [self._stdout_task, self._stderr_task, self._exit_task]
         if self._fault_cleanup is not None:
             tasks.append(self._fault_cleanup)
-        return self._closed and all(task.done() for task in tasks)
+        return self._closed and self._shutdown_callback_done and all(task.done() for task in tasks)
 
     @property
     def pending_events(self) -> int:
@@ -323,6 +333,7 @@ class AgyProcess:
                 if discard_events:
                     self._discard_events = True
                     self._clear_events()
+                self._run_shutdown_callback()
                 return
             self._shutting_down = True
             if discard_events:
@@ -348,6 +359,20 @@ class AgyProcess:
             if discard_events:
                 self._clear_events()
             self._closed = True
+            self._run_shutdown_callback()
+
+    def _run_shutdown_callback(self) -> None:
+        if self._shutdown_callback_done:
+            return
+        callback = self._config.shutdown_callback
+        if callback is None:
+            self._shutdown_callback_done = True
+            return
+        try:
+            callback()
+        except Exception:
+            raise BackendShutdownError from None
+        self._shutdown_callback_done = True
 
     def _signal_gracefully(self) -> None:
         try:
