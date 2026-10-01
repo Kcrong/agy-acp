@@ -53,9 +53,11 @@ The following surface is advertised only after its success, rejection, cancellat
 
 | Method or field | Upstream support | Activation condition |
 | --- | --- | --- |
-| `session/load` | `agy --conversation` | The conversation resumes and its complete prior history is replayed as ACP updates; resumption without history replay is insufficient. |
+| `session/load` | `agy --conversation` resumes identity; the tested EOF/no-prompt path did not replay history | Do not advertise until complete ordered history replay is proven; resumption without replay is insufficient. |
 | `session/close` | Explicit adapter cleanup | The project dispatcher handles the stable method without enabling unrelated SDK unstable routes; active work is cancelled before all resources are released. |
 | `additionalDirectories` | Repeated `agy --add-dir` | Every path is absolute, ordered, and passed as a literal argument. |
+
+A credential-safe `agy 1.2.14 --conversation` probe resumed a known conversation with EOF and no new prompt. It emitted one `init` event, no `step_update` or `result` history events, no standard-error bytes, and exited successfully. This observed path does not establish the complete ordered replay required by ACP, so the adapter leaves `session/load` unregistered and unadvertised.
 
 ### Unsupported for the first implementation
 
@@ -105,7 +107,7 @@ The current compatibility baseline is `agy 1.2.14`. The persistent adapter invoc
 agy --input-format stream-json --output-format stream-json
 ```
 
-Prompts are written only as stdin `user` events. The adapter does not pass `--print` or `--print-timeout`: print mode is for a single command-line prompt, and an upstream print timeout may return partial output as success. The adapter exclusively owns initialization and prompt deadlines. Session loading adds `--conversation <opaque-id>`, and additional directories add repeated `--add-dir <absolute-path>` arguments.
+Prompts are written only as stdin `user` events. The adapter does not pass `--print` or `--print-timeout`: print mode is for a single command-line prompt, and an upstream print timeout may return partial output as success. The adapter exclusively owns initialization and prompt deadlines. Internal process-generation resumption adds `--conversation <opaque-id>`, and additional directories add repeated `--add-dir <absolute-path>` arguments.
 
 The adapter writes one user event per prompt:
 
