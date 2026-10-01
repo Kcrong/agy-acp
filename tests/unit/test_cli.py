@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from agy_acp.cli import main
+from agy_acp.cli import build_parser, main
 
 
 def test_version_flag_reports_package_version(
@@ -29,10 +29,50 @@ def test_help_is_concise(capsys: pytest.CaptureFixture[str]) -> None:
     assert captured.err == ""
 
 
-def test_no_arguments_fails_closed_without_stdout(
+def test_hidden_server_options_parse_without_expanding_help() -> None:
+    arguments = build_parser().parse_args(
+        [
+            "--agy-path",
+            "/absolute/agy",
+            "--prompt-timeout",
+            "12.5",
+            "--max-line-bytes",
+            "8192",
+            "--max-in-flight",
+            "4",
+        ]
+    )
+    assert arguments.agy_path == "/absolute/agy"
+    assert arguments.prompt_timeout == 12.5
+    assert arguments.max_line_bytes == 8192
+    assert arguments.max_in_flight == 4
+
+
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [
+        ("--prompt-timeout", "nan"),
+        ("--prompt-timeout", "inf"),
+        ("--prompt-timeout", "0"),
+        ("--max-line-bytes", "0"),
+        ("--max-in-flight", "0"),
+    ],
+)
+def test_hidden_server_options_require_positive_finite_values(
+    option: str,
+    value: str,
+) -> None:
+    with pytest.raises(SystemExit) as raised:
+        build_parser().parse_args([option, value])
+    assert raised.value.code == 2
+
+
+def test_malformed_hidden_option_is_not_echoed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert main([]) == 2
+    with pytest.raises(SystemExit) as raised:
+        build_parser().parse_args(["--prompt-timeout", "credential-sentinel"])
+    assert raised.value.code == 2
     captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == "agy-acp: the ACP server is not implemented yet\n"
+    assert "credential-sentinel" not in captured.err
+    assert "value must be positive and finite" in captured.err

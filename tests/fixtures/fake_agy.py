@@ -11,6 +11,7 @@ from pathlib import Path
 MODE = sys.argv[1]
 MARKER_ROOT = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 CONVERSATION_ID = "fake-session"
+INIT_CONVERSATION_ID = "fake\x00session" if MODE == "nul-conversation" else CONVERSATION_ID
 
 
 def emit(payload: dict[str, object]) -> None:
@@ -28,13 +29,20 @@ def ignore_signal(_signum: int, _frame: object) -> None:
     return None
 
 
-def result(status: str = "SUCCESS") -> dict[str, object]:
+def result(
+    status: str = "SUCCESS",
+    *,
+    response: str | None = None,
+    conversation_id: str = CONVERSATION_ID,
+) -> dict[str, object]:
+    if response is None:
+        response = "fake-response" if status == "SUCCESS" else ""
     return {
         "event": "result",
         "result": {
-            "conversation_id": CONVERSATION_ID,
+            "conversation_id": conversation_id,
             "status": status,
-            "response": "fake-response" if status == "SUCCESS" else "",
+            "response": response,
             "error": None,
             "duration_seconds": 0,
             "num_turns": 1,
@@ -45,6 +53,10 @@ def result(status: str = "SUCCESS") -> dict[str, object]:
 
 if MODE == "no-init":
     raise SystemExit(7)
+if MODE == "slow-init":
+    time.sleep(30)
+if MODE == "restart-slow-init" and "--conversation" in sys.argv[2:]:
+    time.sleep(30)
 
 if MODE in {"ignore-term", "descendant", "idle-exit-descendant"}:
     signal.signal(signal.SIGTERM, ignore_signal)
@@ -73,7 +85,7 @@ if MODE in {"descendant", "idle-exit-descendant"}:
 emit(
     {
         "event": "init",
-        "conversation_id": CONVERSATION_ID,
+        "conversation_id": INIT_CONVERSATION_ID,
         "init": {
             "cwd": os.getcwd(),
             "permission_mode": "request-review",
@@ -89,6 +101,8 @@ if MODE == "close-stdout":
     time.sleep(30)
 if MODE == "no-read":
     time.sleep(30)
+if MODE == "pre-result":
+    emit(result())
 
 for line in sys.stdin:
     payload = json.loads(line)
@@ -118,19 +132,72 @@ for line in sys.stdin:
         raise SystemExit(7)
     if MODE == "unknown":
         emit({"event": "future_event", "secret": "must-not-survive"})
+    if MODE == "no-delta":
+        emit(result())
+        continue
+    if MODE == "suffix":
+        text_delta = "fake-"
+    elif MODE == "empty-delta":
+        text_delta = ""
+    else:
+        text_delta = "fake-response"
+    update_conversation_id = "other-session" if MODE == "mismatch" else CONVERSATION_ID
     emit(
         {
             "event": "step_update",
             "step_update": {
-                "conversation_id": CONVERSATION_ID,
+                "conversation_id": update_conversation_id,
                 "step_index": 1,
                 "state": "ACTIVE",
                 "step_type": "agent_response",
-                "text_delta": "fake-response",
+                "text_delta": text_delta,
             },
         }
     )
     if MODE in {"hang", "ignore-term", "descendant"}:
         time.sleep(30)
+        continue
+    if MODE == "conflict":
+        emit(result(response="different-response"))
+        continue
+    if MODE == "result-mismatch":
+        emit(result(conversation_id="other-session"))
+        continue
+    if MODE == "backend-canceled":
+        emit(result("CANCELED"))
+        continue
+    terminal_statuses = {
+        "backend-error": "ERROR",
+        "backend-interrupted": "INTERRUPTED",
+        "backend-invalid": "INVALID",
+        "backend-waiting": "WAITING",
+        "backend-running": "RUNNING",
+    }
+    if MODE in terminal_statuses:
+        emit(result(terminal_statuses[MODE]))
+        continue
+    if MODE == "duplicate-result":
+        emit(result())
+        emit(result())
+        continue
+    if MODE == "delayed-duplicate":
+        emit(result())
+        time.sleep(0.2)
+        emit(result())
+        continue
+    if MODE == "late-update":
+        emit(result())
+        emit(
+            {
+                "event": "step_update",
+                "step_update": {
+                    "conversation_id": CONVERSATION_ID,
+                    "step_index": 2,
+                    "state": "ACTIVE",
+                    "step_type": "agent_response",
+                    "text_delta": "stale-response",
+                },
+            }
+        )
         continue
     emit(result())
