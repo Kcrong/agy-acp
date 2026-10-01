@@ -12,6 +12,7 @@ import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 from typing import NoReturn
 
@@ -369,12 +370,8 @@ class McpWorkspaceManager:
             entries = os.scandir(self._parent_fd)
         except OSError:
             raise McpHandoffError from None
-        visited = 0
         with entries:
-            for entry in entries:
-                visited += 1
-                if visited > _MAX_SCAVENGE_ENTRIES:
-                    break
+            for entry in islice(entries, _MAX_SCAVENGE_ENTRIES):
                 if not _is_owner_name(entry.name):
                     continue
                 self._scavenge_candidate(entry.name)
