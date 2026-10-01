@@ -12,6 +12,7 @@ from scripts.git_install_smoke import (
     _run,
     _safe_environment,
     build_requirement,
+    main,
 )
 
 
@@ -197,6 +198,36 @@ def test_run_spawn_failure_is_path_free(tmp_path: Path) -> None:
     assert message.startswith("Spawn probe failed with exit code 1")
     assert "stderr_bytes=" in message
     assert str(tmp_path) not in message
+
+
+def test_main_hides_temporary_directory_failure_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret_path = "/machine/private/scratch-path"
+
+    def fail_temporary_directory(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError(secret_path)
+
+    monkeypatch.setattr(
+        "scripts.git_install_smoke.tempfile.TemporaryDirectory",
+        fail_temporary_directory,
+    )
+
+    result = main(
+        [
+            "--repository",
+            "https://github.com/Kcrong/agy-acp.git",
+            "--revision",
+            "a" * 40,
+        ]
+    )
+
+    assert result == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "git install smoke: failed\n"
+    assert secret_path not in captured.err
 
 
 def test_safe_environment_has_git_on_path(tmp_path: Path) -> None:

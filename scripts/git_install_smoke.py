@@ -381,7 +381,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
         run_smoke(arguments.repository, arguments.revision)
-    except (RuntimeError, ValueError):
+    except (OSError, RuntimeError, ValueError):
         print("git install smoke: failed", file=sys.stderr)
         return 1
     print("git install smoke: passed")
