@@ -77,15 +77,15 @@ ACP v1 requires every agent to support client-provided stdio MCP servers. `agy-a
 `agy 1.2.14` discovers MCP servers from `.agents/mcp_config.json` and starts them lazily after the first user prompt. The adapter provides that configuration without changing the user's workspace or global configuration:
 
 1. A lease-owning manager creates a private `0700` owner directory and one random `0700` generation directory per `agy` process.
-2. The generation's `0600` config contains only the current Python interpreter, `-I -m agy_acp.mcp_launcher`, and random opaque server slots. Client server names, commands, arguments, and environment values are absent.
+2. The generation's `0600` config contains only the current Python interpreter, `-E -P -m agy_acp.mcp_launcher`, and random opaque server slots. Client server names, commands, arguments, and environment values are absent.
 3. Session creation resolves each target to a canonical absolute executable, using only absolute `PATH` entries for a bare command. Encoded client specifications exist only in namespaced overrides on that `agy` process environment.
-4. Python isolated mode prevents workspace `sitecustomize` or `agy_acp` packages from replacing the launcher. The launcher reads one slot, removes every internal specification variable and ambient `PYTHONHOME`/`PYTHONPATH`, applies only that server's requested environment, and replaces itself with the absolute executable and literal arguments through `execve()` without a shell.
+4. Python environment-ignore and safe-path modes prevent workspace `sitecustomize` or `agy_acp` packages from replacing the launcher while retaining normal user-site package lookup. The launcher reads one slot, removes every internal specification variable and ambient `PYTHONHOME`/`PYTHONPATH`, applies only that server's requested environment, and replaces itself with the absolute executable and literal arguments through `execve()` without a shell.
 5. The private generation directory is appended after client `additionalDirectories`, preserving the requested project as the real process working directory.
 6. Cleanup retains the non-sensitive config through lazy MCP startup and removes it only after the complete `agy` process group and owned stream tasks stop. Failed cleanup remains owned and retryable; a later manager removes validated, unlocked stale owner roots.
 
-The installed `agy` process is an explicit trusted boundary. The current upstream interface requires it to receive the process-scoped encoded specifications that its generated launchers consume, so the adapter does not claim to protect MCP commands or credentials from a compromised `agy` process or arbitrary children launched directly by it. The launcher prevents those internal values from reaching the final MCP target or sibling launchers.
+The installed `agy` process and generated launcher processes are an explicit trusted boundary. The current upstream interface requires them to receive the process-scoped encoded specifications, so the adapter does not claim to protect MCP commands or credentials from a compromised `agy` process, a modified launcher, or arbitrary children launched directly by either. Scrubbing ensures that each final MCP target receives no internal specification variables and only its requested environment overrides.
 
-Deterministic tests cover one and many servers, active config timing, random name collision avoidance, project working-directory preservation, concurrent session and environment isolation, launcher failure, initial failure, prompt success/failure/cancellation/timeout, `session/close`, client disconnect, descendant process cleanup, stale-root scavenging, and cleanup retry. Credential-safe live probes separately confirmed lazy startup, two concurrent isolated sessions, and temporary-config precedence for duplicate project server names on `agy 1.2.14`.
+Deterministic tests cover one and many servers, virtualenv and user-site launcher lookup, hostile workspace import hooks, active config timing, random name collision avoidance, project working-directory preservation, concurrent session and environment isolation, launcher failure, initial and in-flight spawn failure, repeated spawn cancellation and deadline, prompt success/failure/cancellation/timeout, `session/close`, client disconnect, descendant process cleanup, parent-path substitution, bounded stale-root scavenging, and cleanup retry. Credential-safe live probes separately confirmed lazy startup, two concurrent isolated sessions, and temporary-config precedence for duplicate project server names on `agy 1.2.14`.
 
 HTTP, SSE, and ACP MCP transports remain unsupported and unadvertised.
 
@@ -219,7 +219,7 @@ Configuration values must be positive safe integers. Invalid values fail at star
 The adapter must not:
 
 - Read or modify `agy` credential files
-- Enumerate or log the inherited environment
+- Emit, log, persist, or include inherited environment values in errors
 - Enable dangerous permission bypass flags
 - Resolve an executable through a client-controlled working directory
 - Pass user input through a shell command string
