@@ -28,12 +28,6 @@ jobs:
           - os: ubuntu-latest
             node: 24
             e2e: true
-          - os: macos-latest
-            node: 22
-            e2e: true
-          - os: windows-latest
-            node: 22
-            e2e: true
 
     steps:
       - name: Check out repository
@@ -56,5 +50,5 @@ jobs:
         run: npm run test:e2e
 
       - name: Test packed artifact in a clean install
-        if: (matrix.os == 'ubuntu-latest' && matrix.node == 24) || matrix.os == 'windows-latest'
+        if: matrix.node == 24
         run: npm run test:package

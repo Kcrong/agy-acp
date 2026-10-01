@@ -9,3 +9,8 @@ coverage/
 .DS_Store
 .kiro/settings/cli.json
 .kiro/settings/.kirocrew-cli-settings.lock
+
+# Local work-tracking documents
+/north_star.md
+/roadmap.md
+/tasks.md
