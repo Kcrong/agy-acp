@@ -169,3 +169,62 @@ def test_diagnostics_fail_closed_after_zero_write() -> None:
         diagnostics.emit(DiagnosticCode.BACKEND_ERROR)
 
     assert not diagnostics.emit(DiagnosticCode.TRANSPORT_ERROR)
+
+
+class _ExceptionWriteStream:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def write(self, _value: bytes) -> int:
+        self.calls += 1
+        raise RuntimeError("stream failure")
+
+    def flush(self) -> None:
+        return None
+
+
+class _PartialThenExceptionStream:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.data = bytearray()
+
+    def write(self, value: bytes) -> int:
+        self.calls += 1
+        if self.calls > 1:
+            raise AttributeError("stream failure")
+        self.data.extend(value[:3])
+        return 3
+
+    def flush(self) -> None:
+        return None
+
+
+class _ExceptionFlushStream:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.data = bytearray()
+
+    def write(self, value: bytes) -> int:
+        self.calls += 1
+        self.data.extend(value)
+        return len(value)
+
+    def flush(self) -> None:
+        raise RuntimeError("stream failure")
+
+
+@pytest.mark.parametrize(
+    "stream",
+    [_ExceptionWriteStream(), _PartialThenExceptionStream(), _ExceptionFlushStream()],
+)
+def test_diagnostics_fail_closed_after_any_stream_exception(stream: object) -> None:
+    diagnostics = DiagnosticSink(stream, max_bytes=64)  # type: ignore[arg-type]
+
+    with pytest.raises(OSError, match="diagnostic stream write failed"):
+        diagnostics.emit(DiagnosticCode.BACKEND_ERROR)
+
+    calls = stream.calls  # type: ignore[attr-defined]
+    assert not diagnostics.emit(DiagnosticCode.TRANSPORT_ERROR)
+    assert stream.calls == calls  # type: ignore[attr-defined]
+    data = getattr(stream, "data", b"")
+    assert len(data) <= 64

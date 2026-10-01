@@ -55,6 +55,6 @@ class DiagnosticSink:
                 offset += written
                 self._written += written
             self._stream.flush()
-        except (OSError, TypeError, ValueError):
+        except Exception:
             self._failed = True
             raise OSError("diagnostic stream write failed") from None
