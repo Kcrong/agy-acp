@@ -423,10 +423,8 @@ async def test_stdio_disconnect_terminates_backend_process_group(tmp_path: Path)
         },
     )
     assert (await receive(process))["method"] == "session/update"
-    started = marker_root / "descendant-started"
-    async with asyncio.timeout(2):
-        while not started.exists():
-            await asyncio.sleep(0.01)
+    started = list(marker_root.glob("descendant-started-*"))
+    assert len(started) == 2
 
     assert process.stdin is not None
     process.stdin.close()
@@ -434,7 +432,7 @@ async def test_stdio_disconnect_terminates_backend_process_group(tmp_path: Path)
     async with asyncio.timeout(8):
         assert await process.wait() == 0
     await asyncio.sleep(1.3)
-    assert not (marker_root / "descendant-survived").exists()
+    assert not list(marker_root.glob("descendant-survived-*"))
     assert process.stderr is not None
     assert await process.stderr.read() == b""
 
