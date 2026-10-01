@@ -33,6 +33,9 @@ MARKER.write_text(
             "internal_specs_absent": not any(
                 name.startswith(MCP_ENV_PREFIX) for name in os.environ
             ),
+            "python_controls_absent": not any(
+                name in os.environ for name in ("PYTHONHOME", "PYTHONPATH")
+            ),
             "cwd_preserved": digest(os.getcwd()) == EXPECTED_CWD_DIGEST,
         },
         separators=(",", ":"),

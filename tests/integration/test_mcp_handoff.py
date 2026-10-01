@@ -9,9 +9,11 @@ from typing import Any, cast
 import pytest
 
 from agy_acp.agent import AgentConfig, AgyAgent
+from agy_acp.config import AgyProcessConfig
 from agy_acp.errors import McpHandoffError
 from agy_acp.executable import AgyCommand
 from agy_acp.mcp import McpWorkspaceManager
+from agy_acp.process import AgyProcess
 from agy_acp.protocol import AcpRequestError
 
 FAKE_AGY = Path(__file__).parents[1] / "fixtures" / "fake_agy.py"
@@ -93,6 +95,7 @@ def generation_roots(temp_parent: Path) -> list[Path]:
 @pytest.mark.asyncio
 async def test_mcp_starts_lazily_and_active_config_lives_until_cancel(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = tmp_path / "workspace"
     marker_root = tmp_path / "markers"
@@ -102,6 +105,24 @@ async def test_mcp_starts_lazily_and_active_config_lives_until_cancel(
         path.mkdir()
     marker = marker_root / "server.json"
     survivor = marker_root / "server-survived"
+    sitecustomize_loaded = marker_root / "sitecustomize-loaded"
+    package_loaded = marker_root / "workspace-package-loaded"
+    (workspace / "sitecustomize.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(sitecustomize_loaded)!r}).write_text('loaded', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    hostile_package = workspace / "agy_acp"
+    hostile_package.mkdir()
+    (hostile_package / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(package_loaded)!r}).write_text('loaded', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (hostile_package / "mcp_launcher.py").write_text("raise SystemExit(91)\n", encoding="utf-8")
+    monkeypatch.setenv("AGY_ACP_MCP_SPEC_STALE", "stale-credential-sentinel")
+    monkeypatch.setenv("PYTHONHOME", str(workspace / "hostile-home"))
+    monkeypatch.setenv("PYTHONPATH", str(workspace))
     secret = "credential-sentinel"
 
     async def send_update(_session_id: str, _update: dict[str, object]) -> None:
@@ -141,12 +162,22 @@ async def test_mcp_starts_lazily_and_active_config_lives_until_cancel(
         "expected_env": True,
         "forbidden_env": True,
         "internal_specs_absent": True,
+        "python_controls_absent": True,
         "cwd_preserved": True,
+    }
+    assert not sitecustomize_loaded.exists()
+    assert not package_loaded.exists()
+    assert read_marker(marker_root / "agy-environment.json") == {
+        "stale_spec_absent": True,
+        "python_controls_absent": True,
     }
     active_roots = generation_roots(temp_parent)
     assert len(active_roots) == 1
     config = active_roots[0] / ".agents" / "mcp_config.json"
     config_text = config.read_text(encoding="utf-8")
+    config_payload = json.loads(config_text)
+    launch = next(iter(config_payload["mcpServers"].values()))
+    assert launch["args"][:3] == ["-I", "-m", "agy_acp.mcp_launcher"]
     assert secret not in config_text
     assert "project-name-collision" not in config_text
     assert stat.S_IMODE(active_roots[0].stat().st_mode) == 0o700
@@ -239,6 +270,7 @@ async def test_multiple_mcp_servers_and_concurrent_sessions_are_isolated(
             "expected_env": True,
             "forbidden_env": True,
             "internal_specs_absent": True,
+            "python_controls_absent": True,
             "cwd_preserved": True,
         }
     assert not generation_roots(temp_parent)
@@ -261,18 +293,21 @@ async def test_mcp_launcher_exec_failure_is_fixed_and_cleans_generation(
 
     agent = AgyAgent(agent_config("mcp", marker_root, temp_parent), send_update)
     secret = "credential-sentinel"
-    missing = tmp_path / "private-missing-command"
+    target = tmp_path / "private-removed-command"
+    target.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    target.chmod(0o700)
     session = await agent.new_session(
         cwd=str(workspace),
         mcp_servers=[
             {
                 "name": "server",
-                "command": str(missing),
+                "command": str(target),
                 "args": [],
                 "env": [{"name": "TOKEN", "value": secret}],
             }
         ],
     )
+    target.unlink()
 
     with pytest.raises(AcpRequestError, match="Backend unavailable") as raised:
         await agent.prompt(
@@ -280,7 +315,7 @@ async def test_mcp_launcher_exec_failure_is_fixed_and_cleans_generation(
             prompt=[{"type": "text", "text": "start"}],
         )
     assert secret not in str(raised.value)
-    assert str(missing) not in str(raised.value)
+    assert str(target) not in str(raised.value)
     assert not generation_roots(temp_parent)
     await agent.close()
     assert not list(temp_parent.iterdir())
@@ -312,6 +347,70 @@ async def test_initial_backend_failure_cleans_mcp_generation(tmp_path: Path) -> 
                 )
             ],
         )
+    assert not generation_roots(temp_parent)
+    await agent.close()
+    assert not list(temp_parent.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_cancellation_during_spawn_cleans_mcp_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "workspace"
+    marker_root = tmp_path / "markers"
+    temp_parent = tmp_path / "mcp-temp"
+    for path in (workspace, marker_root, temp_parent):
+        path.mkdir()
+
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original_spawn = AgyProcess._spawn
+    original_close = McpWorkspaceManager._close_generation
+    close_calls: list[Path] = []
+
+    async def delayed_spawn(
+        config: AgyProcessConfig,
+        argv: tuple[str, ...],
+    ) -> asyncio.subprocess.Process:
+        entered.set()
+        await release.wait()
+        return await original_spawn(config, argv)
+
+    def track_close(manager: McpWorkspaceManager, root: Path) -> None:
+        close_calls.append(root)
+        original_close(manager, root)
+
+    agent = AgyAgent(agent_config("normal", marker_root, temp_parent), send_update)
+    with monkeypatch.context() as patch:
+        patch.setattr(AgyProcess, "_spawn", staticmethod(delayed_spawn))
+        patch.setattr(McpWorkspaceManager, "_close_generation", track_close)
+        creating = asyncio.create_task(
+            agent.new_session(
+                cwd=str(workspace),
+                mcp_servers=[
+                    server(
+                        name="server",
+                        marker=marker_root / "unused.json",
+                        workspace=workspace,
+                        environment_name="TOKEN",
+                        environment_value="credential-sentinel",
+                        forbidden_name="OTHER_TOKEN",
+                    )
+                ],
+            )
+        )
+        await entered.wait()
+        creating.cancel()
+        await asyncio.sleep(0)
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await creating
+
+    assert len(close_calls) == 1
     assert not generation_roots(temp_parent)
     await agent.close()
     assert not list(temp_parent.iterdir())

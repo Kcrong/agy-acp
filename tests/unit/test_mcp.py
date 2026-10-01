@@ -17,6 +17,7 @@ from agy_acp.mcp import (
     McpServerSpec,
     McpWorkspaceManager,
     parse_mcp_servers,
+    resolve_mcp_servers,
 )
 
 
@@ -85,6 +86,32 @@ def test_parse_mcp_servers_rejects_invalid_input_without_echo(
     assert "credential-sentinel" not in str(raised.value)
 
 
+def test_resolve_mcp_servers_canonicalizes_absolute_and_safe_bare_commands() -> None:
+    executable = Path(sys.executable).resolve()
+    absolute, bare = resolve_mcp_servers(
+        parse_mcp_servers(
+            [
+                raw_server(name="absolute", command=str(executable), env=[]),
+                raw_server(
+                    name="bare",
+                    command=executable.name,
+                    env=[{"name": "PATH", "value": str(executable.parent)}],
+                ),
+            ]
+        )
+    )
+
+    assert absolute.command == str(executable)
+    assert bare.command == str(executable)
+
+
+@pytest.mark.parametrize("command", ["./project-server", "missing-server"])
+def test_resolve_mcp_servers_rejects_unsafe_command_without_echo(command: str) -> None:
+    with pytest.raises(InvalidMcpConfigError, match="Invalid MCP server configuration") as raised:
+        resolve_mcp_servers(parse_mcp_servers([raw_server(command=command, env=[])]))
+    assert command not in str(raised.value)
+
+
 def test_generation_config_contains_no_client_spec_values(tmp_path: Path) -> None:
     manager = McpWorkspaceManager(temp_parent=tmp_path)
     specs = parse_mcp_servers(
@@ -144,7 +171,8 @@ def test_launcher_execs_target_with_only_own_server_environment(tmp_path: Path) 
         "from pathlib import Path\n"
         "Path(sys.argv[1]).write_text(json.dumps({"
         "'own': os.environ.get('OWN_SECRET'), "
-        "'spec_keys': sorted(k for k in os.environ if k.startswith('AGY_ACP_MCP_SPEC_'))"
+        "'spec_keys': sorted(k for k in os.environ if k.startswith('AGY_ACP_MCP_SPEC_')), "
+        "'python_controls': sorted(k for k in ('PYTHONHOME', 'PYTHONPATH') if k in os.environ)"
         "}), encoding='utf-8')\n",
         encoding="utf-8",
     )
@@ -166,6 +194,8 @@ def test_launcher_execs_target_with_only_own_server_environment(tmp_path: Path) 
     environment = dict(os.environ)
     environment.update(dict(generation.environment_overrides))
     environment[MCP_ENV_PREFIX + "UNRELATED"] = "credential-other-sentinel"
+    environment["PYTHONHOME"] = str(tmp_path / "hostile-home")
+    environment["PYTHONPATH"] = str(tmp_path)
 
     completed = subprocess.run(
         [launch["command"], *launch["args"]],
@@ -181,6 +211,7 @@ def test_launcher_execs_target_with_only_own_server_environment(tmp_path: Path) 
     assert json.loads(output.read_text(encoding="utf-8")) == {
         "own": "credential-sentinel",
         "spec_keys": [],
+        "python_controls": [],
     }
     generation.close()
     manager.close()
@@ -189,12 +220,44 @@ def test_launcher_execs_target_with_only_own_server_environment(tmp_path: Path) 
 def test_manager_scavenges_unlocked_stale_owner_root(tmp_path: Path) -> None:
     stale = tmp_path / "agy-acp-mcp-owner-stale"
     stale.mkdir(mode=0o700)
-    (stale / ".lease").write_text("", encoding="utf-8")
+    lease = stale / ".lease"
+    lease.write_text("", encoding="utf-8")
+    lease.chmod(0o600)
     (stale / "residue").write_text("non-sensitive", encoding="utf-8")
 
     manager = McpWorkspaceManager(temp_parent=tmp_path)
 
     assert not stale.exists()
+    manager.close()
+
+
+def test_manager_canonicalizes_safe_parent_and_rejects_unsafe_shared_parent(
+    tmp_path: Path,
+) -> None:
+    safe = tmp_path / "safe"
+    safe.mkdir(mode=0o700)
+    alias = tmp_path / "safe-alias"
+    alias.symlink_to(safe, target_is_directory=True)
+    manager = McpWorkspaceManager(temp_parent=alias)
+    assert manager.root.parent == safe.resolve()
+    manager.close()
+
+    unsafe = tmp_path / "unsafe"
+    unsafe.mkdir(mode=0o777)
+    unsafe.chmod(0o777)
+    with pytest.raises(McpHandoffError, match="MCP handoff failed"):
+        McpWorkspaceManager(temp_parent=unsafe)
+
+
+def test_manager_skips_nonregular_stale_lease_without_blocking(tmp_path: Path) -> None:
+    stale = tmp_path / "agy-acp-mcp-owner-fifo"
+    stale.mkdir(mode=0o700)
+    lease = stale / ".lease"
+    os.mkfifo(lease, mode=0o600)
+
+    manager = McpWorkspaceManager(temp_parent=tmp_path)
+
+    assert stale.exists()
     manager.close()
 
 
@@ -224,7 +287,10 @@ def test_manager_close_retries_owner_cleanup_without_releasing_lease(
     assert not owner_root.exists()
 
 
-@pytest.mark.parametrize("raw_spec", [None, "{credential-sentinel"])
+@pytest.mark.parametrize(
+    "raw_spec",
+    [None, "{credential-sentinel", json.dumps(raw_server(command="./project-server", env=[]))],
+)
 def test_launcher_rejects_missing_or_invalid_spec_without_output(
     raw_spec: str | None,
 ) -> None:

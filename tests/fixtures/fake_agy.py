@@ -52,6 +52,21 @@ def result(
     }
 
 
+if MARKER_ROOT is not None and MODE in {"mcp", "mcp-hang", "mcp-unique", "record-env"}:
+    (MARKER_ROOT / "agy-environment.json").write_text(
+        json.dumps(
+            {
+                "stale_spec_absent": "AGY_ACP_MCP_SPEC_STALE" not in os.environ,
+                "python_controls_absent": not any(
+                    name in os.environ for name in ("PYTHONHOME", "PYTHONPATH")
+                ),
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+
+
 def start_mcp_servers() -> list[subprocess.Popen[bytes]]:
     arguments = sys.argv[3:]
     additional_directories = [

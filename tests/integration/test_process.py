@@ -194,7 +194,26 @@ async def test_stderr_is_bounded_without_exposing_content(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_spawn_filters_ambient_reserved_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AGY_ACP_MCP_SPEC_STALE", "credential-sentinel")
+    monkeypatch.setenv("PYTHONHOME", str(tmp_path / "hostile-home"))
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+
+    process = await AgyProcess.launch(config(tmp_path, "record-env", str(tmp_path)))
+    try:
+        assert (tmp_path / "agy-environment.json").read_text(encoding="utf-8") == (
+            '{"stale_spec_absent":true,"python_controls_absent":true}'
+        )
+    finally:
+        await process.close()
+
+
+@pytest.mark.asyncio
 async def test_send_applies_output_line_limit(tmp_path: Path) -> None:
+
     process = await AgyProcess.launch(config(tmp_path, "normal"))
     try:
         with pytest.raises(ProtocolEncodingError, match="line limit"):
