@@ -136,6 +136,7 @@ If no safe handoff exists in the current `agy` interface, release remains blocke
 
 - Linux and macOS start `agy` in a new process session and signal the process group.
 - Windows starts `agy` in a new process group and uses a tested process-tree termination strategy.
+- Persistent `agy` processes run without print-mode or child timeout flags; `AgyProcess` owns all deadlines.
 - Graceful termination is attempted first.
 - Hard termination is bounded and awaited before a lifecycle is considered closed.
 - Platform-specific behavior is isolated behind one process-control interface and tested with fake descendant processes.

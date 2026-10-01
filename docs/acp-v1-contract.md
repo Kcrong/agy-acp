@@ -99,13 +99,13 @@ Image, audio, and embedded resource blocks are rejected until their capabilities
 
 ## `agy` stream-json contract
 
-The current compatibility baseline is `agy 1.2.14`. The adapter invocation baseline is:
+The current compatibility baseline is `agy 1.2.14`. The persistent adapter invocation is:
 
 ```text
-agy --input-format stream-json --output-format stream-json --print-timeout 90s --print=
+agy --input-format stream-json --output-format stream-json
 ```
 
-`--print` requires an explicit string value; the empty value selects stream mode without a standalone prompt. Session loading adds `--conversation <opaque-id>`, and additional directories add repeated `--add-dir <absolute-path>` arguments.
+Prompts are written only as stdin `user` events. The adapter does not pass `--print` or `--print-timeout`: print mode is for a single command-line prompt, and an upstream print timeout may return partial output as success. The adapter exclusively owns initialization and prompt deadlines. Session loading adds `--conversation <opaque-id>`, and additional directories add repeated `--add-dir <absolute-path>` arguments.
 
 The adapter writes one user event per prompt:
 
@@ -129,8 +129,10 @@ Only structural information was retained from the probe. Response text, conversa
 | `step_update` with `text_delta` | Send an ordered `agent_message_chunk` text update. |
 | `step_update` without `text_delta` | Advance internal lifecycle only. |
 | `result` with `status=SUCCESS` | Return `PromptResponse(stop_reason="end_turn")`. |
-| Cancellation-related `ERROR` result after adapter cancellation | Return `PromptResponse(stop_reason="cancelled")`. |
-| Other `ERROR` result | Return a typed execution error. |
+| `result` with `status=CANCELED`, or cancellation-related `ERROR` after adapter cancellation | Return `PromptResponse(stop_reason="cancelled")`. |
+| `INTERRUPTED` after adapter cancellation | Return `PromptResponse(stop_reason="cancelled")`. |
+| Unsolicited `INTERRUPTED`, or `ERROR`, `INVALID`, `WAITING`, or `RUNNING` | Return `-32010 Backend unavailable`; a terminal result must not remain nonterminal or ambiguous. |
+| Unknown status value | Fail closed with `-32010 Backend unavailable`. |
 | Unknown event | Ignore it without logging the raw event or payload. |
 | Malformed record, premature EOF, or abnormal exit | Fail the turn with a typed bridge error and retire the process. |
 
@@ -229,7 +231,7 @@ Every listed row needs an automated test before the first release.
 | Prompt input | Text, resource link, mixed ordering, empty prompt, unsupported block, invalid paths, strict invalid-list rejection |
 | Streaming | One delta, many deltas, split records, slow consumer, final suffix, no-delta final response, conflicting final response, response barrier |
 | `agy` ordering | Duplicate/late init, update before init, missing/mismatched conversation ID, update outside active turn, duplicate/late result |
-| Terminal outcomes | Success, structured backend error, malformed `agy` JSON, premature stdout EOF, non-zero exit, unknown event, exit while events are queued |
+| Terminal outcomes | `SUCCESS`, `ERROR`, `CANCELED`, `INTERRUPTED`, `INVALID`, `WAITING`, `RUNNING`, unknown status, malformed `agy` JSON, oversized backend record, premature stdout EOF, non-zero exit, unknown event, exit while events are queued |
 | Cancellation | Session cancel, request cancel with `-32800`, timeout, cancel/result race, cancel/exit race, ignored graceful signal, hard-kill barrier |
 | Sessions | Capacity, concurrent sessions, duplicate prompt, idle restart, startup retirement, disconnect cleanup, unknown session |
 | Conditional surface | Complete ordered load-history replay, load failure/cancel, close idle/active/starting/duplicate, additional-directory ordering and validation |
@@ -238,4 +240,4 @@ Every listed row needs an automated test before the first release.
 | Runtimes | Python 3.13 and Python 3.14 |
 | Compatibility kit | ACP Test Compatibility Kit plus adapter-specific regressions |
 
-The fake-`agy` end-to-end suite is the primary deterministic oracle. An opt-in real `agy` smoke test verifies event shape and a fixed response hash without printing sensitive values.
+The fake-`agy` end-to-end suite is the primary deterministic oracle. The ACP Test Compatibility Kit is supplementary and does not replace adapter-specific MCP, redaction, or lifecycle coverage. An opt-in real `agy` smoke test verifies event shape and a fixed response hash without printing sensitive values.
