@@ -21,7 +21,7 @@ def test_init_event_is_typed_and_immutable() -> None:
             "init": {
                 "cwd": "/workspace",
                 "permission_mode": "request-review",
-                "tools": ["read", "write"],
+                "tools": ["read", {"name": "write", "secret": "credential-sentinel"}],
             },
         }
     )
@@ -30,10 +30,11 @@ def test_init_event_is_typed_and_immutable() -> None:
         conversation_id="opaque-session",
         cwd="/workspace",
         permission_mode="request-review",
-        tools=("read", "write"),
+        tool_count=2,
         model=None,
         agent=None,
     )
+    assert "credential-sentinel" not in repr(event)
     with pytest.raises(AttributeError):
         event.cwd = "/other"  # type: ignore[misc]
 
@@ -66,7 +67,7 @@ def test_text_step_update_is_typed() -> None:
             "step_update": {
                 "conversation_id": "opaque-session",
                 "step_index": 2,
-                "state": "ACTIVE",
+                "state": "running",
                 "step_type": "agent_response",
                 "text_delta": "hello",
                 "duration_seconds": 0.5,
@@ -78,7 +79,7 @@ def test_text_step_update_is_typed() -> None:
     assert event == AgyStepUpdateEvent(
         conversation_id="opaque-session",
         step_index=2,
-        state="ACTIVE",
+        state="running",
         step_type="agent_response",
         text_delta="hello",
         duration_seconds=0.5,
@@ -165,7 +166,7 @@ def test_unknown_event_discards_name_and_payload() -> None:
             "step_update": {
                 "conversation_id": "id",
                 "step_index": 0,
-                "state": "UNKNOWN",
+                "state": "",
                 "step_type": "agent_response",
             },
         },

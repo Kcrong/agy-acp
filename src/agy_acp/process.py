@@ -163,6 +163,10 @@ class AgyProcess:
         return self._events.qsize()
 
     @property
+    def fault_cleanup_active(self) -> bool:
+        return self._fault_cleanup is not None
+
+    @property
     def fault_cleanup_failed(self) -> bool:
         return self._fault_cleanup_failed
 
@@ -253,6 +257,25 @@ class AgyProcess:
             discard_events=True,
         )
         self._clear_events()
+
+    async def retire(self) -> None:
+        await self._run_shutdown(
+            close_stdin=True,
+            signal_process=False,
+            discard_events=False,
+        )
+        trailing_event = False
+        while True:
+            try:
+                item = self._events.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if not isinstance(item, _ProcessEnd):
+                trailing_event = True
+        if trailing_event:
+            raise BackendProtocolError
+        if self._process.returncode != 0:
+            raise BackendExitedError
 
     async def _run_shutdown(
         self,
@@ -394,7 +417,11 @@ class AgyProcess:
         returncode = self._process.returncode
         self._root_exited.set()
         await self._kill_tree()
-        await self._join_tasks([self._stdout_task, self._stderr_task])
+        await asyncio.gather(
+            self._stdout_task,
+            self._stderr_task,
+            return_exceptions=True,
+        )
         if not self._discard_events and not self._events.full():
             self._events.put_nowait(_ProcessEnd(returncode))
         self._closed = True
@@ -426,6 +453,8 @@ class AgyProcess:
             self._fault_cleanup.add_done_callback(self._observe_fault_cleanup)
 
     def _observe_fault_cleanup(self, task: asyncio.Task[None]) -> None:
+        if self._fault_cleanup is task:
+            self._fault_cleanup = None
         if task.cancelled():
             return
         try:

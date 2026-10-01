@@ -6,6 +6,8 @@ from pathlib import Path
 
 from agy_acp.executable import AgyCommand
 
+_MAX_PENDING_EVENT_BYTES = 16 * 1024 * 1024
+
 
 def _positive_integer(name: str, value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -31,7 +33,7 @@ class AgyProcessConfig:
     conversation_id: str | None = None
     max_line_bytes: int = 4 * 1024 * 1024
     max_stderr_bytes: int = 64 * 1024
-    max_pending_events: int = 256
+    max_pending_events: int = 2
     init_timeout: float = 15.0
     write_timeout: float = 15.0
     cancel_grace: float = 5.0
@@ -52,6 +54,8 @@ class AgyProcessConfig:
         _positive_integer("max_line_bytes", self.max_line_bytes)
         _positive_integer("max_stderr_bytes", self.max_stderr_bytes)
         _positive_integer("max_pending_events", self.max_pending_events)
+        if self.max_line_bytes * self.max_pending_events > _MAX_PENDING_EVENT_BYTES:
+            raise ValueError("combined event buffer limits are unsafe")
         _positive_seconds("init_timeout", self.init_timeout)
         _positive_seconds("write_timeout", self.write_timeout)
         _positive_seconds("cancel_grace", self.cancel_grace)

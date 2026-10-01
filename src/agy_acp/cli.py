@@ -15,7 +15,7 @@ from agy_acp.executable import AgyCommand, resolve_executable
 from agy_acp.protocol import AcpStdioServer
 
 _DEFAULT_MAX_LINE_BYTES = 4 * 1024 * 1024
-_DEFAULT_MAX_IN_FLIGHT = 256
+_DEFAULT_MAX_IN_FLIGHT = 16
 
 
 def positive_float(value: str) -> float:

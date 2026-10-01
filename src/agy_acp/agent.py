@@ -43,6 +43,23 @@ from agy_acp.executable import AgyCommand
 from agy_acp.process import AgyProcess
 
 UpdateSender = Callable[[str, dict[str, object]], Awaitable[None]]
+_MAX_BUFFERED_EVENT_BYTES = 128 * 1024 * 1024
+
+
+def _positive_integer(name: str, value: object) -> None:
+    if type(value) is not int or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+
+
+def _positive_seconds(name: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{name} must be positive and finite")
+    try:
+        seconds = float(value)
+    except OverflowError:
+        raise ValueError(f"{name} must be positive and finite") from None
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError(f"{name} must be positive and finite")
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,7 +67,7 @@ class AgentConfig:
     command: AgyCommand
     max_line_bytes: int = 4 * 1024 * 1024
     max_stderr_bytes: int = 64 * 1024
-    max_pending_events: int = 256
+    max_pending_events: int = 2
     max_sessions: int = 16
     init_timeout: float = 15.0
     write_timeout: float = 15.0
@@ -59,18 +76,26 @@ class AgentConfig:
     kill_grace: float = 2.0
 
     def __post_init__(self) -> None:
-        if type(self.max_sessions) is not int or self.max_sessions <= 0:
-            raise ValueError("max_sessions must be a positive integer")
-        if isinstance(self.prompt_timeout, bool) or not isinstance(
-            self.prompt_timeout, int | float
+        if not isinstance(self.command, AgyCommand):
+            raise ValueError("command must be an AgyCommand")
+        for name in (
+            "max_line_bytes",
+            "max_stderr_bytes",
+            "max_pending_events",
+            "max_sessions",
         ):
-            raise ValueError("prompt_timeout must be positive and finite")
-        try:
-            timeout = float(self.prompt_timeout)
-        except OverflowError:
-            raise ValueError("prompt_timeout must be positive and finite") from None
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise ValueError("prompt_timeout must be positive and finite")
+            _positive_integer(name, getattr(self, name))
+        for name in (
+            "init_timeout",
+            "write_timeout",
+            "prompt_timeout",
+            "cancel_grace",
+            "kill_grace",
+        ):
+            _positive_seconds(name, getattr(self, name))
+        retained_event_bytes = self.max_line_bytes * self.max_pending_events * self.max_sessions
+        if retained_event_bytes > _MAX_BUFFERED_EVENT_BYTES:
+            raise ValueError("combined event buffer limits are unsafe")
 
 
 @dataclass(slots=True)
@@ -286,9 +311,10 @@ class AgyAgent:
                 if not session_id or "\x00" in session_id:
                     raise _backend_unavailable()
                 try:
-                    await process.close()
+                    await process.retire()
                 except BackendProcessError:
-                    self._orphaned_processes.add(process)
+                    if not process.closed:
+                        self._orphaned_processes.add(process)
                     raise _backend_unavailable() from None
                 async with self._admission_lock:
                     if self._closing or session_id in self._sessions:
@@ -459,11 +485,15 @@ class AgyAgent:
             session.process = None
         try:
             async with asyncio.timeout(self._remaining_prompt_time(deadline)):
-                await process.close()
+                await process.retire()
         except TimeoutError:
             raise BackendTimeoutError from None
         except BackendProcessError:
-            await self._mark_unusable(session_id, session, process)
+            if process.closed:
+                session.cancel_cleanup = None
+                session.cancel_process = None
+            else:
+                await self._mark_unusable(session_id, session, process)
             raise
         session.cancel_cleanup = None
         session.cancel_process = None
@@ -550,8 +580,6 @@ class AgyAgent:
                             deadline,
                         )
                     continue
-                if process.pending_events:
-                    raise _backend_unavailable()
                 return await self._complete_result(
                     session,
                     session_id,
@@ -712,8 +740,6 @@ class AgyAgent:
                 suffix,
                 deadline,
             )
-        if process.pending_events:
-            raise _backend_unavailable()
         if self._is_cancelling(session):
             return await self._finish_cancellation(session_id, session)
         await self._close_generation(session_id, session, process, deadline)
@@ -752,11 +778,7 @@ class AgyAgent:
             session.cancel_requested = True
         cleanup = self._start_cancel_cleanup(session)
         session.cancel_event.set()
-        if (
-            cleanup is None
-            and active_prompt is not None
-            and active_prompt is not asyncio.current_task()
-        ):
+        if active_prompt is not None and active_prompt is not asyncio.current_task():
             active_prompt.cancel()
         barrier = asyncio.create_task(
             self._wait_for_close_parts(
@@ -796,9 +818,9 @@ class AgyAgent:
         session.cancel_requested = True
         cleanup = self._start_cancel_cleanup(session)
         session.cancel_event.set()
+        if active_prompt is not asyncio.current_task():
+            active_prompt.cancel()
         if cleanup is None:
-            if active_prompt is not asyncio.current_task():
-                active_prompt.cancel()
             return
         try:
             await asyncio.shield(cleanup)

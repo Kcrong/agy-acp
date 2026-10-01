@@ -106,3 +106,7 @@ class AcpRequestError(AgyAcpError):
         self.code = code
         self.message = message
         super().__init__(message)
+
+
+class ProtocolWriteError(AgyAcpError):
+    """Raised after protocol output becomes indeterminate or unavailable."""

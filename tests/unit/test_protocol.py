@@ -152,3 +152,132 @@ async def test_completed_error_wins_cancellation_during_blocked_output() -> None
         }
     ]
     assert writer.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [0, -1, True])
+async def test_protocol_requires_positive_line_bound(invalid: object) -> None:
+    reader = asyncio.StreamReader()
+    writer = cast(asyncio.StreamWriter, BlockingWriter())
+    with pytest.raises(ValueError, match="max_line_bytes must be a positive integer"):
+        AcpStdioServer(
+            await make_agent(),
+            reader,
+            writer,
+            max_line_bytes=cast(int, invalid),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid",
+    [0, -1, True, float("nan"), float("inf"), 10**1000, "credential-sentinel"],
+)
+async def test_protocol_requires_positive_write_timeout_without_echo(
+    invalid: object,
+) -> None:
+    reader = asyncio.StreamReader()
+    writer = cast(asyncio.StreamWriter, BlockingWriter())
+    with pytest.raises(ValueError, match="write_timeout must be positive and finite") as raised:
+        AcpStdioServer(
+            await make_agent(),
+            reader,
+            writer,
+            max_line_bytes=4096,
+            write_timeout=cast(float, invalid),
+        )
+    assert "sentinel" not in str(raised.value)
+
+
+class FailingWriter(BlockingWriter):
+    def write(self, data: bytes) -> None:
+        del data
+        raise OSError
+
+
+@pytest.mark.asyncio
+async def test_write_timeout_never_emits_two_terminal_records() -> None:
+    reader = asyncio.StreamReader()
+    writer = BlockingWriter()
+    server = AcpStdioServer(
+        await make_agent(),
+        reader,
+        cast(asyncio.StreamWriter, writer),
+        max_line_bytes=4096,
+        write_timeout=0.01,
+    )
+    serving = asyncio.create_task(server.serve())
+    reader.feed_data(
+        b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}\n'
+    )
+
+    async with asyncio.timeout(1):
+        await serving
+    records = [json.loads(line) for line in writer.data.splitlines()]
+    assert len(records) == 1
+    assert records[0]["id"] == 1
+    assert "result" in records[0]
+    assert writer.closed
+
+
+@pytest.mark.asyncio
+async def test_synchronous_write_failure_closes_without_second_response() -> None:
+    reader = asyncio.StreamReader()
+    writer = FailingWriter()
+    server = AcpStdioServer(
+        await make_agent(),
+        reader,
+        cast(asyncio.StreamWriter, writer),
+        max_line_bytes=4096,
+    )
+    serving = asyncio.create_task(server.serve())
+    reader.feed_data(
+        b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":1}}\n'
+    )
+
+    async with asyncio.timeout(1):
+        await serving
+    assert writer.data == b""
+    assert writer.closed
+
+
+@pytest.mark.asyncio
+async def test_protocol_rejects_unsafe_request_buffer_product() -> None:
+    reader = asyncio.StreamReader()
+    writer = cast(asyncio.StreamWriter, BlockingWriter())
+    with pytest.raises(ValueError, match="combined request buffer limits are unsafe"):
+        AcpStdioServer(
+            await make_agent(),
+            reader,
+            writer,
+            max_line_bytes=4 * 1024 * 1024,
+            max_in_flight=17,
+        )
+
+
+@pytest.mark.asyncio
+async def test_cancelling_idle_server_leaves_no_protocol_tasks() -> None:
+    reader = asyncio.StreamReader()
+    writer = BlockingWriter()
+    server = AcpStdioServer(
+        await make_agent(),
+        reader,
+        cast(asyncio.StreamWriter, writer),
+        max_line_bytes=4096,
+    )
+    serving = asyncio.create_task(server.serve())
+    await asyncio.sleep(0)
+
+    serving.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await serving
+    await asyncio.sleep(0)
+
+    current = asyncio.current_task()
+    leaked = [
+        task.get_name()
+        for task in asyncio.all_tasks()
+        if task is not current and not task.done() and task.get_name().startswith("agy-acp.")
+    ]
+    assert leaked == []
+    assert writer.closed

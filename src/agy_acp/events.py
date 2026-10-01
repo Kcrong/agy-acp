@@ -23,7 +23,7 @@ class AgyInitEvent:
     conversation_id: str
     cwd: str
     permission_mode: str
-    tools: tuple[str, ...]
+    tool_count: int
     model: str | None
     agent: str | None
 
@@ -138,14 +138,14 @@ def _parse_init(payload: Mapping[str, object]) -> AgyInitEvent:
     values = _mapping(payload.get("init"))
     tools_value = values.get("tools")
     if not isinstance(tools_value, list) or any(
-        not isinstance(tool, str) or not tool for tool in tools_value
+        not (isinstance(tool, Mapping) or (isinstance(tool, str) and tool)) for tool in tools_value
     ):
         raise _EventShapeError
     return AgyInitEvent(
         conversation_id=_required_string(payload, "conversation_id"),
         cwd=_required_string(values, "cwd"),
         permission_mode=_required_string(values, "permission_mode"),
-        tools=tuple(tools_value),
+        tool_count=len(tools_value),
         model=_optional_string(values, "model"),
         agent=_optional_string(values, "agent"),
     )
@@ -154,8 +154,6 @@ def _parse_init(payload: Mapping[str, object]) -> AgyInitEvent:
 def _parse_step_update(payload: Mapping[str, object]) -> AgyStepUpdateEvent:
     values = _mapping(payload.get("step_update"))
     state = _required_string(values, "state")
-    if state not in {"ACTIVE", "DONE"}:
-        raise _EventShapeError
     return AgyStepUpdateEvent(
         conversation_id=_required_string(values, "conversation_id"),
         step_index=_required_integer(values, "step_index"),

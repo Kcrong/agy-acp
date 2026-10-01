@@ -102,6 +102,16 @@ def test_process_config_requires_positive_finite_values(
         AgyProcessConfig(**values)  # type: ignore[arg-type]
 
 
+def test_process_config_rejects_unsafe_event_buffer_product(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="combined event buffer limits are unsafe"):
+        AgyProcessConfig(
+            command=AgyCommand(Path(sys.executable).resolve()),
+            cwd=tmp_path,
+            max_line_bytes=4 * 1024 * 1024,
+            max_pending_events=5,
+        )
+
+
 def test_bare_command_never_searches_current_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

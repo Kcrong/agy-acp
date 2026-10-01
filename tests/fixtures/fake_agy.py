@@ -114,6 +114,25 @@ emit(
 
 if MODE == "idle-exit-descendant":
     raise SystemExit(0)
+if MODE == "init-exit-error":
+    raise SystemExit(7)
+if MODE == "init-exit-signal":
+    os.kill(os.getpid(), signal.SIGTERM)
+    time.sleep(30)
+if MODE == "duplicate-init":
+    emit(
+        {
+            "event": "init",
+            "conversation_id": INIT_CONVERSATION_ID,
+            "init": {
+                "cwd": os.getcwd(),
+                "permission_mode": "request-review",
+                "tools": [],
+            },
+        }
+    )
+if MODE == "malformed-after-init":
+    os.write(sys.stdout.fileno(), b"{broken}\n")
 if MODE == "close-stdout":
     os.close(sys.stdout.fileno())
     time.sleep(30)
@@ -148,6 +167,22 @@ for line in sys.stdin:
         continue
     if MODE == "early-exit":
         raise SystemExit(7)
+    if MODE == "burst-exit-zero":
+        for index in range(4):
+            emit(
+                {
+                    "event": "step_update",
+                    "step_update": {
+                        "conversation_id": CONVERSATION_ID,
+                        "step_index": index,
+                        "state": "running",
+                        "step_type": "agent_response",
+                        "text_delta": "x",
+                    },
+                }
+            )
+        emit(result(response="xxxx"))
+        raise SystemExit(0)
     if MODE == "unknown":
         emit({"event": "future_event", "secret": "must-not-survive"})
     if MODE == "no-delta":
@@ -193,6 +228,23 @@ for line in sys.stdin:
     }
     if MODE in terminal_statuses:
         emit(result(terminal_statuses[MODE]))
+        continue
+    if MODE == "result-error-exit":
+        emit(result())
+        raise SystemExit(7)
+    if MODE == "result-exit-zero":
+        emit(result())
+        raise SystemExit(0)
+    if MODE == "result-sigterm":
+        emit(result())
+        os.kill(os.getpid(), signal.SIGTERM)
+        time.sleep(30)
+    if MODE == "result-sigkill":
+        emit(result())
+        os.kill(os.getpid(), signal.SIGKILL)
+    if MODE == "result-malformed-tail":
+        emit(result())
+        os.write(sys.stdout.fileno(), b"{broken}\n")
         continue
     if MODE == "duplicate-result":
         emit(result())
