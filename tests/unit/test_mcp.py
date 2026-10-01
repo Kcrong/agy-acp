@@ -317,6 +317,70 @@ def test_manager_canonicalizes_safe_parent_and_rejects_unsafe_shared_parent(
     manager.close()
 
 
+def test_manager_rejects_parent_substitution_before_descriptor_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    original_parent = tmp_path / "original-parent"
+    original_open = os.open
+    substituted = False
+
+    def substitute_before_open(path: Any, *args: Any, **kwargs: Any) -> int:
+        nonlocal substituted
+        if Path(path) == parent and kwargs.get("dir_fd") is None and not substituted:
+            parent.rename(original_parent)
+            parent.mkdir(mode=0o700)
+            substituted = True
+        return original_open(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr("agy_acp.mcp.os.open", substitute_before_open)
+        with pytest.raises(McpHandoffError, match="MCP handoff failed"):
+            McpWorkspaceManager(temp_parent=parent)
+
+    assert substituted
+    assert not list(parent.iterdir())
+    parent.rmdir()
+    original_parent.rename(parent)
+
+
+def test_manager_rejects_sticky_parent_not_owned_by_current_or_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent = tmp_path / "sticky"
+    parent.mkdir()
+    parent.chmod(0o1777)
+    different_uid = os.getuid() + 1
+
+    with monkeypatch.context() as patch:
+        patch.setattr("agy_acp.mcp.os.getuid", lambda: different_uid)
+        with pytest.raises(McpHandoffError, match="MCP handoff failed"):
+            McpWorkspaceManager(temp_parent=parent)
+
+
+def test_manager_caps_total_nonmatching_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for index in range(129):
+        (tmp_path / f"unrelated-{index:032x}").touch()
+    examined: list[str] = []
+
+    def reject_name(name: str) -> bool:
+        examined.append(name)
+        return False
+
+    with monkeypatch.context() as patch:
+        patch.setattr("agy_acp.mcp._is_owner_name", reject_name)
+        manager = McpWorkspaceManager(temp_parent=tmp_path)
+
+    assert len(examined) == 128
+    manager.close()
+
+
 def test_manager_caps_stale_candidate_work(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -345,6 +409,88 @@ def test_manager_skips_nonregular_stale_lease_without_blocking(tmp_path: Path) -
     manager = McpWorkspaceManager(temp_parent=tmp_path)
 
     assert stale.exists()
+    manager.close()
+
+
+def test_manager_cleans_owner_root_when_inode_capture_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_stat = os.stat
+
+    def fail_owner_stat(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        if (
+            isinstance(path, str)
+            and path.startswith("agy-acp-mcp-owner-")
+            and kwargs.get("dir_fd") is not None
+        ):
+            raise OSError
+        return original_stat(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr("agy_acp.mcp.os.stat", fail_owner_stat)
+        with pytest.raises(McpHandoffError, match="MCP handoff failed"):
+            McpWorkspaceManager(temp_parent=tmp_path)
+
+    assert not list(tmp_path.glob("agy-acp-mcp-owner-*"))
+
+
+def test_manager_cleans_owner_root_when_root_open_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_open = os.open
+
+    def fail_owner_open(path: Any, *args: Any, **kwargs: Any) -> int:
+        if (
+            isinstance(path, str)
+            and path.startswith("agy-acp-mcp-owner-")
+            and kwargs.get("dir_fd") is not None
+        ):
+            raise OSError
+        return original_open(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr("agy_acp.mcp.os.open", fail_owner_open)
+        with pytest.raises(McpHandoffError, match="MCP handoff failed"):
+            McpWorkspaceManager(temp_parent=tmp_path)
+
+    assert not list(tmp_path.glob("agy-acp-mcp-owner-*"))
+
+
+def test_prepare_closes_config_descriptor_when_fdopen_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = McpWorkspaceManager(temp_parent=tmp_path)
+    original_open = os.open
+    original_close = os.close
+    config_fds: list[int] = []
+    closed_fds: list[int] = []
+
+    def track_config_open(path: Any, *args: Any, **kwargs: Any) -> int:
+        descriptor = original_open(path, *args, **kwargs)
+        if path == "mcp_config.json":
+            config_fds.append(descriptor)
+        return descriptor
+
+    def fail_fdopen(*_args: Any, **_kwargs: Any) -> Any:
+        raise OSError
+
+    def track_close(descriptor: int) -> None:
+        closed_fds.append(descriptor)
+        original_close(descriptor)
+
+    with monkeypatch.context() as patch:
+        patch.setattr("agy_acp.mcp.os.open", track_config_open)
+        patch.setattr("agy_acp.mcp.os.fdopen", fail_fdopen)
+        patch.setattr("agy_acp.mcp.os.close", track_close)
+        with pytest.raises(McpHandoffError, match="MCP handoff failed"):
+            manager.prepare(parse_mcp_servers([raw_server()]))
+
+    assert len(config_fds) == 1
+    assert config_fds[0] in closed_fds
+    assert not list(manager.root.glob("generation-*"))
     manager.close()
 
 
