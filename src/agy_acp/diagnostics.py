@@ -25,6 +25,7 @@ class DiagnosticSink:
         self._max_bytes = max_bytes
         self._written = 0
         self._truncated = False
+        self._failed = False
 
     @property
     def truncated(self) -> bool:
@@ -33,7 +34,7 @@ class DiagnosticSink:
     def emit(self, code: DiagnosticCode) -> bool:
         if not isinstance(code, DiagnosticCode):
             raise TypeError("code must be a DiagnosticCode")
-        if self._truncated:
+        if self._failed or self._truncated:
             return False
         line = _PREFIX + code.encode() + b"\n"
         if self._written + len(line) + len(_TRUNCATION_LINE) <= self._max_bytes:
@@ -45,8 +46,15 @@ class DiagnosticSink:
         return False
 
     def _write(self, value: bytes) -> None:
-        written = self._stream.write(value)
-        if written != len(value):
-            raise OSError("diagnostic stream performed a partial write")
-        self._stream.flush()
-        self._written += written
+        offset = 0
+        try:
+            while offset < len(value):
+                written = self._stream.write(value[offset:])
+                if not isinstance(written, int) or written <= 0 or written > len(value) - offset:
+                    raise OSError
+                offset += written
+                self._written += written
+            self._stream.flush()
+        except (OSError, TypeError, ValueError):
+            self._failed = True
+            raise OSError("diagnostic stream write failed") from None

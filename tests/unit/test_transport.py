@@ -53,9 +53,10 @@ def test_protocol_encoder_rejects_invalid_values_without_echo(
     assert "nan" not in str(raised.value).lower()
 
 
-def test_protocol_line_size_must_be_positive() -> None:
-    with pytest.raises(ValueError, match="positive"):
-        encode_json_line({}, max_line_bytes=0)
+@pytest.mark.parametrize("limit", [0, True, 1.5, float("nan"), float("inf"), "64"])
+def test_protocol_line_size_must_be_positive_integer(limit: object) -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        encode_json_line({}, max_line_bytes=limit)  # type: ignore[arg-type]
 
 
 def test_diagnostics_emit_only_fixed_codes() -> None:
@@ -123,3 +124,48 @@ def test_diagnostic_truncation_marker_is_emitted_once() -> None:
 def test_diagnostic_limit_must_be_an_integer(limit: object) -> None:
     with pytest.raises(ValueError, match="integer"):
         DiagnosticSink(io.BytesIO(), max_bytes=limit)  # type: ignore[arg-type]
+
+
+class _ShortWriteStream:
+    def __init__(self, chunk_size: int) -> None:
+        self.chunk_size = chunk_size
+        self.data = bytearray()
+
+    def write(self, value: bytes) -> int:
+        written = min(self.chunk_size, len(value))
+        self.data.extend(value[:written])
+        return written
+
+    def flush(self) -> None:
+        return None
+
+
+class _ZeroWriteStream:
+    def write(self, _value: bytes) -> int:
+        return 0
+
+    def flush(self) -> None:
+        return None
+
+
+def test_diagnostics_handle_legal_short_writes_within_limit() -> None:
+    stream = _ShortWriteStream(chunk_size=3)
+    diagnostics = DiagnosticSink(stream, max_bytes=64)  # type: ignore[arg-type]
+
+    for _ in range(10):
+        diagnostics.emit(DiagnosticCode.BACKEND_ERROR)
+
+    output = bytes(stream.data)
+    assert len(output) <= 64
+    assert output.count(b"diagnostics truncated") == 1
+    assert diagnostics.truncated
+
+
+def test_diagnostics_fail_closed_after_zero_write() -> None:
+    stream = _ZeroWriteStream()
+    diagnostics = DiagnosticSink(stream, max_bytes=64)  # type: ignore[arg-type]
+
+    with pytest.raises(OSError, match="diagnostic stream write failed"):
+        diagnostics.emit(DiagnosticCode.BACKEND_ERROR)
+
+    assert not diagnostics.emit(DiagnosticCode.TRANSPORT_ERROR)

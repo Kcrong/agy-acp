@@ -19,7 +19,7 @@ def _validate_keys(value: object) -> None:
 
 def encode_json_line(message: object, *, max_line_bytes: int) -> bytes:
     """Encode one JSON object without permitting physical embedded newlines."""
-    if isinstance(max_line_bytes, bool) or max_line_bytes <= 0:
+    if type(max_line_bytes) is not int or max_line_bytes <= 0:
         raise ValueError("max_line_bytes must be a positive integer")
     if not isinstance(message, Mapping):
         raise ProtocolEncodingError("Protocol message must be a JSON object")
