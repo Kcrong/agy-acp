@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agy-acp"
+version = "0.1.0"
+description = "ACP v1 adapter for the Google Antigravity CLI"
+requires-python = ">=3.13,<3.15"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = [
+  "agent-client-protocol==0.12.1",
+]
+
+[project.urls]
+Repository = "https://github.com/Kcrong/agy-acp"
+
+[project.scripts]
+agy-acp = "agy_acp.cli:main"
+
+[dependency-groups]
+dev = [
+  "hatchling==1.32.4",
+  "mypy==2.3.1",
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "pytest-timeout==2.4.0",
+  "ruff==0.16.9",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agy_acp"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/agy_acp", "pyproject.toml", "uv.lock"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["A", "B", "E", "F", "I", "RUF", "SIM", "UP"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unreachable = true
+show_error_codes = true
+files = ["src", "tests", "scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["--strict-config", "--strict-markers", "--timeout=30", "-ra"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
