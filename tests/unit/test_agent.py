@@ -1049,3 +1049,90 @@ async def test_connection_close_retries_orphan_from_cancelled_session_start(
     with pytest.raises(AcpRequestError, match="Backend unavailable"):
         await starting
     assert cancel_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_concurrent_connection_close_callers_share_barrier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    update_arrived = asyncio.Event()
+
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        update_arrived.set()
+
+    agent = AgyAgent(agent_config(tmp_path, "hang"), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    prompting = asyncio.create_task(
+        agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    )
+    async with asyncio.timeout(2):
+        await update_arrived.wait()
+
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    original_cancel = AgyProcess.cancel
+
+    async def slow_cancel(process: AgyProcess) -> None:
+        cleanup_started.set()
+        await release_cleanup.wait()
+        await original_cancel(process)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(AgyProcess, "cancel", slow_cancel)
+        first = asyncio.create_task(agent.close())
+        async with asyncio.timeout(2):
+            await cleanup_started.wait()
+        second = asyncio.create_task(agent.close())
+        await asyncio.sleep(0)
+        assert not first.done()
+        assert not second.done()
+        release_cleanup.set()
+        await asyncio.gather(first, second)
+
+    assert (await prompting).stop_reason == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_connection_close_retries_retained_orphan_after_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    update_arrived = asyncio.Event()
+
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        update_arrived.set()
+
+    agent = AgyAgent(agent_config(tmp_path, "hang"), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    prompting = asyncio.create_task(
+        agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    )
+    async with asyncio.timeout(2):
+        await update_arrived.wait()
+
+    cancel_calls = 0
+    original_cancel = AgyProcess.cancel
+
+    async def fail_twice(process: AgyProcess) -> None:
+        nonlocal cancel_calls
+        cancel_calls += 1
+        if cancel_calls <= 2:
+            raise BackendShutdownError
+        await original_cancel(process)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(AgyProcess, "cancel", fail_twice)
+        with pytest.raises(BackendShutdownError):
+            await agent.close()
+        with pytest.raises(AcpRequestError, match="Backend unavailable"):
+            await prompting
+        await agent.close()
+
+    assert cancel_calls == 3

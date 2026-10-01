@@ -217,6 +217,7 @@ class AgyAgent:
         self._starting_sessions = 0
         self._starting_tasks: set[asyncio.Task[object]] = set()
         self._closing = False
+        self._close_task: asyncio.Task[None] | None = None
 
     async def initialize(self, *, protocol_version: int) -> InitializeResponse:
         return InitializeResponse(
@@ -810,9 +811,32 @@ class AgyAgent:
         session.cancel_process = None
 
     async def close(self) -> None:
-        if self._closing:
-            return
-        self._closing = True
+        cleanup = self._close_task
+        retry = (
+            cleanup is not None
+            and cleanup.done()
+            and (cleanup.cancelled() or cleanup.exception() is not None)
+        )
+        if cleanup is None or retry:
+            self._closing = True
+            cleanup = asyncio.create_task(
+                self._close_all(),
+                name="agy-acp.agent-close",
+            )
+            self._close_task = cleanup
+        cancelled = False
+        while True:
+            try:
+                await asyncio.shield(cleanup)
+                break
+            except asyncio.CancelledError:
+                if cleanup.done():
+                    return cleanup.result()
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+
+    async def _close_all(self) -> None:
         sessions = list(self._sessions.values())
         self._sessions.clear()
         owned_tasks: list[asyncio.Task[object]] = []
