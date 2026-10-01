@@ -31,7 +31,9 @@ class AgyProcessConfig:
     conversation_id: str | None = None
     max_line_bytes: int = 4 * 1024 * 1024
     max_stderr_bytes: int = 64 * 1024
+    max_pending_events: int = 256
     init_timeout: float = 15.0
+    write_timeout: float = 15.0
     cancel_grace: float = 5.0
     kill_grace: float = 2.0
 
@@ -49,6 +51,8 @@ class AgyProcessConfig:
             raise ValueError("conversation_id must be nonempty and contain no NUL")
         _positive_integer("max_line_bytes", self.max_line_bytes)
         _positive_integer("max_stderr_bytes", self.max_stderr_bytes)
+        _positive_integer("max_pending_events", self.max_pending_events)
         _positive_seconds("init_timeout", self.init_timeout)
+        _positive_seconds("write_timeout", self.write_timeout)
         _positive_seconds("cancel_grace", self.cancel_grace)
         _positive_seconds("kill_grace", self.kill_grace)

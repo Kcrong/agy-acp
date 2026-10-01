@@ -12,6 +12,7 @@ from agy_acp.errors import (
     BackendExitedError,
     BackendProtocolError,
     BackendTimeoutError,
+    BackendWriteError,
     ProtocolEncodingError,
 )
 from agy_acp.events import AgyResultEvent, AgyStepUpdateEvent
@@ -21,16 +22,25 @@ from agy_acp.process import AgyProcess
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "fake_agy.py"
 
 
-def config(tmp_path: Path, mode: str, *extra: str) -> AgyProcessConfig:
+def config(
+    tmp_path: Path,
+    mode: str,
+    *extra: str,
+    max_line_bytes: int = 4096,
+    max_pending_events: int = 8,
+    write_timeout: float = 0.2,
+) -> AgyProcessConfig:
     return AgyProcessConfig(
         command=AgyCommand(
             Path(sys.executable).resolve(),
             ("-u", str(FIXTURE), mode, *extra),
         ),
         cwd=tmp_path,
-        max_line_bytes=4096,
+        max_line_bytes=max_line_bytes,
         max_stderr_bytes=64,
+        max_pending_events=max_pending_events,
         init_timeout=2,
+        write_timeout=write_timeout,
         cancel_grace=0.15,
         kill_grace=2,
     )
@@ -227,3 +237,125 @@ async def test_cancelling_cancel_caller_still_completes_cleanup(tmp_path: Path) 
 
     assert process.closed
     assert process.returncode not in (None, 0)
+
+
+@pytest.mark.asyncio
+async def test_clean_stdout_eof_with_live_root_is_protocol_error(tmp_path: Path) -> None:
+    process = await AgyProcess.launch(config(tmp_path, "close-stdout"))
+
+    with pytest.raises(BackendProtocolError, match="invalid output"):
+        await process.receive(timeout=1)
+
+    assert process.closed
+
+
+@pytest.mark.asyncio
+async def test_event_queue_is_bounded_and_released_on_cancel(tmp_path: Path) -> None:
+    process = await AgyProcess.launch(config(tmp_path, "flood", max_pending_events=8))
+    await send_prompt(process)
+    await asyncio.sleep(0.1)
+
+    assert process.pending_events == 8
+    await process.cancel()
+    assert process.pending_events == 0
+    assert process.closed
+
+
+@pytest.mark.asyncio
+async def test_write_timeout_closes_nonreading_backend(tmp_path: Path) -> None:
+    process = await AgyProcess.launch(
+        config(
+            tmp_path,
+            "no-read",
+            max_line_bytes=8 * 1024 * 1024,
+            write_timeout=0.05,
+        )
+    )
+
+    with pytest.raises(BackendWriteError, match="input failed"):
+        await process.send({"payload": "x" * (4 * 1024 * 1024)})
+
+    assert process.closed
+
+
+@pytest.mark.asyncio
+async def test_cancelled_backpressured_send_closes_backend(tmp_path: Path) -> None:
+    process = await AgyProcess.launch(
+        config(
+            tmp_path,
+            "no-read",
+            max_line_bytes=8 * 1024 * 1024,
+            write_timeout=5,
+        )
+    )
+    sending = asyncio.create_task(process.send({"payload": "x" * (4 * 1024 * 1024)}))
+    await asyncio.sleep(0.05)
+    assert not sending.done()
+
+    sending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await sending
+
+    assert process.closed
+
+
+@pytest.mark.asyncio
+async def test_close_is_bounded_during_backpressured_send(tmp_path: Path) -> None:
+    process = await AgyProcess.launch(
+        config(
+            tmp_path,
+            "no-read",
+            max_line_bytes=8 * 1024 * 1024,
+            write_timeout=5,
+        )
+    )
+    sending = asyncio.create_task(process.send({"payload": "x" * (4 * 1024 * 1024)}))
+    await asyncio.sleep(0.05)
+
+    started = time.monotonic()
+    await process.close()
+    assert time.monotonic() - started < 1
+    with pytest.raises((BackendExitedError, BackendWriteError)):
+        await sending
+    assert process.closed
+
+
+@pytest.mark.asyncio
+async def test_repeated_caller_cancellation_waits_for_shutdown(tmp_path: Path) -> None:
+    process = await AgyProcess.launch(config(tmp_path, "ignore-term"))
+    await send_prompt(process)
+    assert isinstance(await process.receive(timeout=2), AgyStepUpdateEvent)
+
+    cleanup = asyncio.create_task(process.cancel())
+    await asyncio.sleep(0.02)
+    cleanup.cancel()
+    await asyncio.sleep(0.02)
+    cleanup.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cleanup
+
+    assert process.closed
+    await asyncio.sleep(0)
+    assert not _active_process_tasks()
+
+
+def _active_process_tasks() -> list[asyncio.Task[object]]:
+    current = asyncio.current_task()
+    return [
+        task
+        for task in asyncio.all_tasks()
+        if task is not current and not task.done() and task.get_name().startswith("agy-acp.")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_parser_fault_closed_is_a_task_quiescence_barrier(tmp_path: Path) -> None:
+    process = await AgyProcess.launch(config(tmp_path, "malformed"))
+    await send_prompt(process)
+
+    with pytest.raises(BackendProtocolError):
+        await process.receive(timeout=2)
+
+    assert process.closed
+    await asyncio.sleep(0)
+    assert not _active_process_tasks()

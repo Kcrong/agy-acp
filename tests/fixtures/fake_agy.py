@@ -86,10 +86,31 @@ emit(
 
 if MODE == "idle-exit-descendant":
     raise SystemExit(0)
+if MODE == "close-stdout":
+    os.close(sys.stdout.fileno())
+    time.sleep(30)
+if MODE == "no-read":
+    time.sleep(30)
 
 for line in sys.stdin:
     payload = json.loads(line)
     if payload.get("event") != "user":
+        continue
+    if MODE == "flood":
+        for index in range(100):
+            emit(
+                {
+                    "event": "step_update",
+                    "step_update": {
+                        "conversation_id": CONVERSATION_ID,
+                        "step_index": index,
+                        "state": "ACTIVE",
+                        "step_type": "agent_response",
+                        "text_delta": "x",
+                    },
+                }
+            )
+        time.sleep(30)
         continue
     if MODE == "malformed":
         os.write(sys.stdout.fileno(), b"{broken}\n")
