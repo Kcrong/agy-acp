@@ -33,6 +33,7 @@ from agy_acp import __version__
 from agy_acp.config import AgyProcessConfig
 from agy_acp.errors import (
     AcpRequestError,
+    BackendExitedError,
     BackendProcessError,
     BackendShutdownError,
     BackendTimeoutError,
@@ -43,6 +44,22 @@ from agy_acp.executable import AgyCommand
 from agy_acp.process import AgyProcess
 
 UpdateSender = Callable[[str, dict[str, object]], Awaitable[None]]
+
+
+def _positive_integer(name: str, value: object) -> None:
+    if type(value) is not int or value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+
+
+def _positive_seconds(name: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{name} must be positive and finite")
+    try:
+        seconds = float(value)
+    except OverflowError:
+        raise ValueError(f"{name} must be positive and finite") from None
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError(f"{name} must be positive and finite")
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,18 +76,23 @@ class AgentConfig:
     kill_grace: float = 2.0
 
     def __post_init__(self) -> None:
-        if type(self.max_sessions) is not int or self.max_sessions <= 0:
-            raise ValueError("max_sessions must be a positive integer")
-        if isinstance(self.prompt_timeout, bool) or not isinstance(
-            self.prompt_timeout, int | float
+        if not isinstance(self.command, AgyCommand):
+            raise ValueError("command must be an AgyCommand")
+        for name in (
+            "max_line_bytes",
+            "max_stderr_bytes",
+            "max_pending_events",
+            "max_sessions",
         ):
-            raise ValueError("prompt_timeout must be positive and finite")
-        try:
-            timeout = float(self.prompt_timeout)
-        except OverflowError:
-            raise ValueError("prompt_timeout must be positive and finite") from None
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise ValueError("prompt_timeout must be positive and finite")
+            _positive_integer(name, getattr(self, name))
+        for name in (
+            "init_timeout",
+            "write_timeout",
+            "prompt_timeout",
+            "cancel_grace",
+            "kill_grace",
+        ):
+            _positive_seconds(name, getattr(self, name))
 
 
 @dataclass(slots=True)
@@ -465,6 +487,8 @@ class AgyAgent:
         except BackendProcessError:
             await self._mark_unusable(session_id, session, process)
             raise
+        if process.returncode is not None and process.returncode > 0:
+            raise BackendExitedError
         session.cancel_cleanup = None
         session.cancel_process = None
 

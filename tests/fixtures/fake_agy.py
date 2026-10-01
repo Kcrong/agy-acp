@@ -194,6 +194,9 @@ for line in sys.stdin:
     if MODE in terminal_statuses:
         emit(result(terminal_statuses[MODE]))
         continue
+    if MODE == "result-error-exit":
+        emit(result())
+        raise SystemExit(7)
     if MODE == "duplicate-result":
         emit(result())
         emit(result())

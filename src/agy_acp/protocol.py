@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import math
 from collections.abc import Mapping
 
 from acp import PROTOCOL_VERSION
@@ -90,6 +91,16 @@ class AcpStdioServer:
         write_timeout: float = 15.0,
         max_in_flight: int = 256,
     ) -> None:
+        if type(max_line_bytes) is not int or max_line_bytes <= 0:
+            raise ValueError("max_line_bytes must be a positive integer")
+        if isinstance(write_timeout, bool) or not isinstance(write_timeout, int | float):
+            raise ValueError("write_timeout must be positive and finite")
+        try:
+            timeout = float(write_timeout)
+        except OverflowError:
+            raise ValueError("write_timeout must be positive and finite") from None
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError("write_timeout must be positive and finite")
         if type(max_in_flight) is not int or max_in_flight <= 0:
             raise ValueError("max_in_flight must be a positive integer")
         self._agent = agent

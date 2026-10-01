@@ -152,3 +152,38 @@ async def test_completed_error_wins_cancellation_during_blocked_output() -> None
         }
     ]
     assert writer.closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [0, -1, True])
+async def test_protocol_requires_positive_line_bound(invalid: object) -> None:
+    reader = asyncio.StreamReader()
+    writer = cast(asyncio.StreamWriter, BlockingWriter())
+    with pytest.raises(ValueError, match="max_line_bytes must be a positive integer"):
+        AcpStdioServer(
+            await make_agent(),
+            reader,
+            writer,
+            max_line_bytes=cast(int, invalid),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid",
+    [0, -1, True, float("nan"), float("inf"), 10**1000, "credential-sentinel"],
+)
+async def test_protocol_requires_positive_write_timeout_without_echo(
+    invalid: object,
+) -> None:
+    reader = asyncio.StreamReader()
+    writer = cast(asyncio.StreamWriter, BlockingWriter())
+    with pytest.raises(ValueError, match="write_timeout must be positive and finite") as raised:
+        AcpStdioServer(
+            await make_agent(),
+            reader,
+            writer,
+            max_line_bytes=4096,
+            write_timeout=cast(float, invalid),
+        )
+    assert "sentinel" not in str(raised.value)

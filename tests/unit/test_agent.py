@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -1136,3 +1138,54 @@ async def test_connection_close_retries_retained_orphan_after_failure(
         await agent.close()
 
     assert cancel_calls == 3
+
+
+@pytest.mark.asyncio
+async def test_success_result_with_positive_exit_fails_closed(tmp_path: Path) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    agent = AgyAgent(agent_config(tmp_path, "result-error-exit"), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    with pytest.raises(AcpRequestError, match="Backend unavailable") as raised:
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    assert raised.value.code == -32010
+    await agent.close_session(session.session_id)
+    await agent.close()
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["max_line_bytes", "max_stderr_bytes", "max_pending_events", "max_sessions"],
+)
+@pytest.mark.parametrize("invalid", [0, -1, True])
+def test_agent_config_rejects_every_invalid_integer_limit(
+    tmp_path: Path,
+    field_name: str,
+    invalid: object,
+) -> None:
+    base = agent_config(tmp_path, "normal")
+    with pytest.raises(ValueError, match=rf"^{field_name} must be a positive integer$"):
+        cast(Any, replace)(base, **{field_name: invalid})
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ["init_timeout", "write_timeout", "prompt_timeout", "cancel_grace", "kill_grace"],
+)
+@pytest.mark.parametrize(
+    "invalid",
+    [0, -1, True, float("nan"), float("inf"), 10**1000, "credential-sentinel"],
+)
+def test_agent_config_rejects_every_invalid_duration_without_echo(
+    tmp_path: Path,
+    field_name: str,
+    invalid: object,
+) -> None:
+    base = agent_config(tmp_path, "normal")
+    with pytest.raises(ValueError, match=rf"^{field_name} must be positive and finite$") as raised:
+        cast(Any, replace)(base, **{field_name: invalid})
+    assert "sentinel" not in str(raised.value)
