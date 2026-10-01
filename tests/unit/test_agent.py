@@ -663,7 +663,10 @@ async def test_initial_close_failure_is_quarantined_for_connection_cleanup(
     async def send_update(_session_id: str, _update: dict[str, object]) -> None:
         return None
 
-    agent = AgyAgent(agent_config(tmp_path, "normal"), send_update)
+    agent = AgyAgent(
+        agent_config(tmp_path, "normal", max_sessions=1),
+        send_update,
+    )
 
     async def fail_close(_process: AgyProcess) -> None:
         raise BackendShutdownError
@@ -672,6 +675,9 @@ async def test_initial_close_failure_is_quarantined_for_connection_cleanup(
         patch.setattr(AgyProcess, "close", fail_close)
         with pytest.raises(AcpRequestError, match="Backend unavailable"):
             await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+        with pytest.raises(AcpRequestError, match="Session capacity exceeded") as full:
+            await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+        assert full.value.code == -32014
 
     cancel_calls = 0
     original_cancel = AgyProcess.cancel

@@ -272,7 +272,8 @@ class AgyAgent:
         async with self._admission_lock:
             if self._closing:
                 raise _backend_unavailable()
-            if len(self._sessions) + self._starting_sessions >= self._config.max_sessions:
+            admitted = len(self._sessions) + self._starting_sessions + len(self._orphaned_processes)
+            if admitted >= self._config.max_sessions:
                 raise AcpRequestError(-32014, "Session capacity exceeded")
             self._starting_sessions += 1
 
