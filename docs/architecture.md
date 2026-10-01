@@ -151,7 +151,7 @@ No platform is advertised unless its hosted matrix and process-tree tests pass.
 
 ## CI policy
 
-CI uses only standard GitHub-hosted runners in a four-cell matrix:
+CI uses only standard GitHub-hosted runners in a four-cell matrix and runs the test jobs only for pull requests whose current state is ready for review. Draft revisions and pushes to `main` do not allocate test jobs. Branch protection requires all four current-head checks before `main` can be merged:
 
 - `ubuntu-latest`: Python 3.13 and 3.14
 - `macos-latest`: Python 3.13 and 3.14
