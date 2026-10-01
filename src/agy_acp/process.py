@@ -7,7 +7,7 @@ import os
 import signal
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from agy_acp.config import AgyProcessConfig
 from agy_acp.errors import (
@@ -29,6 +29,12 @@ from agy_acp.transport import encode_json_line
 @dataclass(frozen=True, slots=True)
 class _ProcessEnd:
     returncode: int
+
+
+@dataclass(frozen=True, slots=True)
+class _SpawnResult:
+    process: asyncio.subprocess.Process | None = None
+    failure: Literal["timeout", "cancelled", "start", "internal"] | None = None
 
 
 class _ByteRing:
@@ -97,7 +103,12 @@ class AgyProcess:
         config: AgyProcessConfig,
         *,
         on_started: Callable[[AgyProcess], None] | None = None,
+        timeout: float | None = None,
     ) -> AgyProcess:
+        launch_timeout = (
+            config.init_timeout if timeout is None else min(config.init_timeout, timeout)
+        )
+        deadline = asyncio.get_running_loop().time() + launch_timeout
         try:
             argv = build_agy_argv(
                 config.command,
@@ -111,28 +122,37 @@ class AgyProcess:
             cls._run_prestart_callback(config)
             raise
 
-        spawn_task = asyncio.create_task(
-            cls._spawn(config, argv),
-            name="agy-acp.spawn",
-        )
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            cls._run_prestart_callback(config)
+            raise BackendTimeoutError
+        try:
+            spawn_task = asyncio.create_task(
+                cls._supervise_spawn(config, argv, remaining),
+                name="agy-acp.spawn",
+            )
+        except BaseException:
+            cls._run_prestart_callback(config)
+            raise
         cancelled = False
         while True:
             try:
-                process = await asyncio.shield(spawn_task)
+                spawn_result = await asyncio.shield(spawn_task)
                 break
             except asyncio.CancelledError:
-                if spawn_task.cancelled():
-                    cls._run_prestart_callback(config)
-                    raise
                 cancelled = True
-            except (OSError, RuntimeError, ValueError):
-                cls._run_prestart_callback(config)
-                if cancelled:
-                    raise asyncio.CancelledError from None
-                raise BackendStartError from None
-            except BaseException:
-                cls._run_prestart_callback(config)
-                raise
+
+        if spawn_result.failure is not None:
+            cls._run_prestart_callback(config)
+            if cancelled or spawn_result.failure == "cancelled":
+                raise asyncio.CancelledError from None
+            if spawn_result.failure == "timeout":
+                raise BackendTimeoutError
+            raise BackendStartError from None
+        process = spawn_result.process
+        if process is None:
+            cls._run_prestart_callback(config)
+            raise BackendStartError
 
         instance = cls(config, process)
         try:
@@ -140,8 +160,11 @@ class AgyProcess:
                 on_started(instance)
             if cancelled:
                 raise asyncio.CancelledError
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise BackendTimeoutError
             event = await instance._receive(
-                timeout=config.init_timeout,
+                timeout=remaining,
                 before_initialization=True,
             )
             if not isinstance(event, AgyInitEvent):
@@ -152,6 +175,26 @@ class AgyProcess:
         except BaseException:
             await instance.cancel()
             raise
+
+    @classmethod
+    async def _supervise_spawn(
+        cls,
+        config: AgyProcessConfig,
+        argv: tuple[str, ...],
+        timeout: float,
+    ) -> _SpawnResult:
+        try:
+            async with asyncio.timeout(timeout):
+                process = await cls._spawn(config, argv)
+        except TimeoutError:
+            return _SpawnResult(failure="timeout")
+        except asyncio.CancelledError:
+            return _SpawnResult(failure="cancelled")
+        except (OSError, RuntimeError, ValueError):
+            return _SpawnResult(failure="start")
+        except BaseException:
+            return _SpawnResult(failure="internal")
+        return _SpawnResult(process=process)
 
     @staticmethod
     def _run_prestart_callback(config: AgyProcessConfig) -> None:

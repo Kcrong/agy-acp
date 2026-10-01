@@ -470,6 +470,7 @@ class AgyAgent:
                 process = await AgyProcess.launch(
                     process_config,
                     on_started=attach_start,
+                    timeout=self._remaining_prompt_time(deadline),
                 )
         except BackendTimeoutError:
             if started_process is not None:

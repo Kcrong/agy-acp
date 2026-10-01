@@ -4,6 +4,7 @@ import contextlib
 import fcntl
 import json
 import os
+import re
 import secrets
 import shutil
 import stat
@@ -20,7 +21,9 @@ from agy_acp.executable import resolve_executable
 MCP_ENV_PREFIX = "AGY_ACP_MCP_SPEC_"
 MCP_SCRUBBED_ENVIRONMENT = frozenset({"PYTHONHOME", "PYTHONPATH"})
 _OWNER_PREFIX = "agy-acp-mcp-owner-"
+_OWNER_NAME = re.compile(rf"{re.escape(_OWNER_PREFIX)}[0-9a-f]{{32}}")
 _GENERATION_PREFIX = "generation-"
+_MAX_SCAVENGE_CANDIDATES = 128
 _MAX_SERVERS = 16
 _MAX_ARGUMENTS = 128
 _MAX_ENVIRONMENT = 128
@@ -207,6 +210,19 @@ class McpGeneration:
         self._closed = True
 
 
+def _directory_flags() -> int:
+    return (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+
+
+def _identity(metadata: os.stat_result) -> tuple[int, int]:
+    return metadata.st_dev, metadata.st_ino
+
+
 def _safe_temp_parent(parent: Path) -> Path:
     try:
         resolved = parent.resolve(strict=True)
@@ -214,32 +230,55 @@ def _safe_temp_parent(parent: Path) -> Path:
     except (OSError, RuntimeError):
         raise McpHandoffError from None
     mode = stat.S_IMODE(metadata.st_mode)
-    trusted_owner = metadata.st_uid in {0, os.getuid()}
-    private = mode & 0o022 == 0
+    private_owner = metadata.st_uid == os.getuid() and mode & 0o022 == 0
     sticky = bool(metadata.st_mode & stat.S_ISVTX)
-    if not resolved.is_absolute() or not stat.S_ISDIR(metadata.st_mode):
-        raise McpHandoffError
-    if not trusted_owner or (not private and not sticky):
+    if not stat.S_ISDIR(metadata.st_mode) or (not private_owner and not sticky):
         raise McpHandoffError
     return resolved
+
+
+def _create_owner_root(parent: Path, parent_fd: int) -> Path:
+    for _attempt in range(16):
+        root = parent / f"{_OWNER_PREFIX}{secrets.token_hex(16)}"
+        try:
+            os.mkdir(root.name, mode=0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            continue
+        return root
+    raise McpHandoffError
 
 
 class McpWorkspaceManager:
     def __init__(self, *, temp_parent: Path | None = None) -> None:
         requested_parent = Path(tempfile.gettempdir()) if temp_parent is None else temp_parent
         self._parent = _safe_temp_parent(requested_parent)
-        self._scavenge()
+        self._parent_fd: int | None = None
+        self._root_fd: int | None = None
         self._lease_fd: int | None = None
         try:
-            self._root = Path(tempfile.mkdtemp(prefix=_OWNER_PREFIX, dir=self._parent))
-            self._root.chmod(0o700)
-            lease = self._root / ".lease"
+            self._parent_fd = os.open(self._parent, _directory_flags())
+            parent_metadata = os.fstat(self._parent_fd)
+            parent_path_metadata = self._parent.lstat()
+            if _identity(parent_metadata) != _identity(parent_path_metadata):
+                raise ValueError
+            self._scavenge()
+            self._root = _create_owner_root(self._parent, self._parent_fd)
+            os.chmod(self._root.name, 0o700, dir_fd=self._parent_fd)
+            self._root_fd = os.open(
+                self._root.name,
+                _directory_flags(),
+                dir_fd=self._parent_fd,
+            )
+            root_metadata = os.fstat(self._root_fd)
+            root_path_metadata = self._root.lstat()
+            self._root_identity = _identity(root_metadata)
             flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-            self._lease_fd = os.open(lease, flags, 0o600)
-            root_metadata = self._root.lstat()
+            self._lease_fd = os.open(".lease", flags, 0o600, dir_fd=self._root_fd)
+            os.fchmod(self._lease_fd, 0o600)
             lease_metadata = os.fstat(self._lease_fd)
             if (
-                not stat.S_ISDIR(root_metadata.st_mode)
+                self._root_identity != _identity(root_path_metadata)
+                or not stat.S_ISDIR(root_metadata.st_mode)
                 or root_metadata.st_uid != os.getuid()
                 or stat.S_IMODE(root_metadata.st_mode) != 0o700
                 or not stat.S_ISREG(lease_metadata.st_mode)
@@ -249,16 +288,22 @@ class McpWorkspaceManager:
             ):
                 raise ValueError
             fcntl.flock(self._lease_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (OSError, ValueError):
-            if self._lease_fd is not None:
-                with contextlib.suppress(OSError):
-                    os.close(self._lease_fd)
-                self._lease_fd = None
+        except (McpHandoffError, OSError, ValueError):
             root = getattr(self, "_root", None)
-            if isinstance(root, Path):
+            remove_root = False
+            if isinstance(root, Path) and self._root_fd is not None:
+                with contextlib.suppress(OSError):
+                    remove_root = _identity(os.fstat(self._root_fd)) == _identity(root.lstat())
+            for descriptor_name in ("_lease_fd", "_root_fd", "_parent_fd"):
+                descriptor = getattr(self, descriptor_name)
+                if descriptor is not None:
+                    with contextlib.suppress(OSError):
+                        os.close(descriptor)
+                    setattr(self, descriptor_name, None)
+            if remove_root and isinstance(root, Path):
                 shutil.rmtree(root, ignore_errors=True)
             raise McpHandoffError from None
-        self._active_roots: set[Path] = set()
+        self._active_roots: dict[Path, tuple[int, int]] = {}
         self._root_removed = False
         self._closed = False
 
@@ -266,72 +311,118 @@ class McpWorkspaceManager:
     def root(self) -> Path:
         return self._root
 
-    def _scavenge(self) -> None:
+    def _validate_root_path(self) -> None:
+        if self._root_fd is None:
+            raise McpHandoffError
         try:
-            candidates = list(self._parent.glob(f"{_OWNER_PREFIX}*"))
+            descriptor_metadata = os.fstat(self._root_fd)
+            path_metadata = self._root.lstat()
         except OSError:
             raise McpHandoffError from None
-        for candidate in candidates:
-            candidate_fd: int | None = None
-            lease_fd: int | None = None
-            try:
-                directory_flags = (
-                    os.O_RDONLY
-                    | getattr(os, "O_DIRECTORY", 0)
-                    | getattr(os, "O_NOFOLLOW", 0)
-                    | getattr(os, "O_NONBLOCK", 0)
-                )
-                candidate_fd = os.open(candidate, directory_flags)
-                candidate_metadata = os.fstat(candidate_fd)
-                path_metadata = candidate.lstat()
-                if (
-                    not stat.S_ISDIR(candidate_metadata.st_mode)
-                    or candidate_metadata.st_uid != os.getuid()
-                    or stat.S_IMODE(candidate_metadata.st_mode) != 0o700
-                    or (candidate_metadata.st_dev, candidate_metadata.st_ino)
-                    != (path_metadata.st_dev, path_metadata.st_ino)
-                ):
+        if (
+            _identity(descriptor_metadata) != self._root_identity
+            or _identity(path_metadata) != self._root_identity
+            or not stat.S_ISDIR(path_metadata.st_mode)
+            or path_metadata.st_uid != os.getuid()
+            or stat.S_IMODE(path_metadata.st_mode) != 0o700
+        ):
+            raise McpHandoffError
+
+    def _scavenge(self) -> None:
+        if self._parent_fd is None:
+            raise McpHandoffError
+        try:
+            entries = os.scandir(self._parent_fd)
+        except OSError:
+            raise McpHandoffError from None
+        matched = 0
+        with entries:
+            for entry in entries:
+                if _OWNER_NAME.fullmatch(entry.name) is None:
                     continue
-                lease_fd = os.open(
-                    ".lease",
-                    os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
-                    dir_fd=candidate_fd,
-                )
-                lease_metadata = os.fstat(lease_fd)
-                if (
-                    not stat.S_ISREG(lease_metadata.st_mode)
-                    or lease_metadata.st_uid != os.getuid()
-                    or stat.S_IMODE(lease_metadata.st_mode) != 0o600
-                    or lease_metadata.st_nlink != 1
-                ):
-                    continue
-                fcntl.flock(lease_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                current_metadata = candidate.lstat()
-                if (current_metadata.st_dev, current_metadata.st_ino) != (
-                    candidate_metadata.st_dev,
-                    candidate_metadata.st_ino,
-                ):
-                    continue
-                shutil.rmtree(candidate)
-            except OSError:
-                continue
-            finally:
-                if lease_fd is not None:
-                    with contextlib.suppress(OSError):
-                        os.close(lease_fd)
-                if candidate_fd is not None:
-                    with contextlib.suppress(OSError):
-                        os.close(candidate_fd)
+                matched += 1
+                if matched > _MAX_SCAVENGE_CANDIDATES:
+                    break
+                self._scavenge_candidate(entry.name)
+
+    def _scavenge_candidate(self, candidate_name: str) -> None:
+        if self._parent_fd is None:
+            raise McpHandoffError
+        candidate = self._parent / candidate_name
+        candidate_fd: int | None = None
+        lease_fd: int | None = None
+        try:
+            candidate_fd = os.open(
+                candidate_name,
+                _directory_flags(),
+                dir_fd=self._parent_fd,
+            )
+            candidate_metadata = os.fstat(candidate_fd)
+            path_metadata = candidate.lstat()
+            if (
+                not stat.S_ISDIR(candidate_metadata.st_mode)
+                or candidate_metadata.st_uid != os.getuid()
+                or stat.S_IMODE(candidate_metadata.st_mode) != 0o700
+                or (candidate_metadata.st_dev, candidate_metadata.st_ino)
+                != (path_metadata.st_dev, path_metadata.st_ino)
+            ):
+                return
+            lease_fd = os.open(
+                ".lease",
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=candidate_fd,
+            )
+            lease_metadata = os.fstat(lease_fd)
+            if (
+                not stat.S_ISREG(lease_metadata.st_mode)
+                or lease_metadata.st_uid != os.getuid()
+                or stat.S_IMODE(lease_metadata.st_mode) != 0o600
+                or lease_metadata.st_nlink != 1
+            ):
+                return
+            fcntl.flock(lease_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            current_metadata = candidate.lstat()
+            if (current_metadata.st_dev, current_metadata.st_ino) != (
+                candidate_metadata.st_dev,
+                candidate_metadata.st_ino,
+            ):
+                return
+            shutil.rmtree(candidate)
+        except OSError:
+            return
+        finally:
+            if lease_fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(lease_fd)
+            if candidate_fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(candidate_fd)
 
     def prepare(self, specs: tuple[McpServerSpec, ...]) -> McpGeneration:
-        if self._closed or not specs:
+        if self._closed or not specs or self._root_fd is None:
             raise McpHandoffError
+        self._validate_root_path()
         nonce = secrets.token_hex(16)
-        root = self._root / f"{_GENERATION_PREFIX}{nonce}"
+        generation_name = f"{_GENERATION_PREFIX}{nonce}"
+        root = self._root / generation_name
+        generation_fd: int | None = None
+        agents_fd: int | None = None
+        generation_identity: tuple[int, int] | None = None
         try:
-            root.mkdir(mode=0o700)
-            agents = root / ".agents"
-            agents.mkdir(mode=0o700)
+            os.mkdir(generation_name, mode=0o700, dir_fd=self._root_fd)
+            os.chmod(generation_name, 0o700, dir_fd=self._root_fd)
+            generation_fd = os.open(
+                generation_name,
+                _directory_flags(),
+                dir_fd=self._root_fd,
+            )
+            os.fchmod(generation_fd, 0o700)
+            generation_metadata = os.fstat(generation_fd)
+            generation_identity = _identity(generation_metadata)
+            os.mkdir(".agents", mode=0o700, dir_fd=generation_fd)
+            os.chmod(".agents", 0o700, dir_fd=generation_fd)
+            agents_fd = os.open(".agents", _directory_flags(), dir_fd=generation_fd)
+            os.fchmod(agents_fd, 0o700)
             servers: dict[str, object] = {}
             overrides: list[tuple[str, str]] = []
             launcher_path = Path(sys.executable)
@@ -342,13 +433,18 @@ class McpWorkspaceManager:
                 slot = f"{nonce.upper()}_{index}"
                 servers[f"agy-acp-{nonce}-{index}"] = {
                     "command": launcher,
-                    "args": ["-I", "-m", "agy_acp.mcp_launcher", slot],
+                    "args": ["-E", "-P", "-m", "agy_acp.mcp_launcher", slot],
                 }
                 overrides.append((MCP_ENV_PREFIX + slot, encode_launcher_spec(spec)))
-            config = agents / "mcp_config.json"
             flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-            descriptor = os.open(config, flags, 0o600)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            config_fd = os.open(
+                "mcp_config.json",
+                flags,
+                0o600,
+                dir_fd=agents_fd,
+            )
+            os.fchmod(config_fd, 0o600)
+            with os.fdopen(config_fd, "w", encoding="utf-8") as stream:
                 json.dump(
                     {"mcpServers": servers},
                     stream,
@@ -356,45 +452,75 @@ class McpWorkspaceManager:
                     separators=(",", ":"),
                     allow_nan=False,
                 )
-            self._active_roots.add(root)
+            self._validate_root_path()
+            path_metadata = root.lstat()
+            if (
+                _identity(path_metadata) != generation_identity
+                or not stat.S_ISDIR(path_metadata.st_mode)
+                or path_metadata.st_uid != os.getuid()
+                or stat.S_IMODE(path_metadata.st_mode) != 0o700
+            ):
+                raise McpHandoffError
+            self._active_roots[root] = generation_identity
             return McpGeneration(
                 root=root,
                 environment_overrides=tuple(overrides),
                 _manager=self,
             )
-        except (OSError, TypeError, ValueError):
-            shutil.rmtree(root, ignore_errors=True)
+        except (McpHandoffError, OSError, TypeError, ValueError):
+            if generation_identity is not None:
+                with contextlib.suppress(McpHandoffError, OSError):
+                    self._remove_generation(root, generation_identity)
             raise McpHandoffError from None
+        finally:
+            for owned_fd in (agents_fd, generation_fd):
+                if owned_fd is not None:
+                    with contextlib.suppress(OSError):
+                        os.close(owned_fd)
 
-    def _close_generation(self, root: Path) -> None:
-        if root.parent != self._root or root not in self._active_roots:
+    def _remove_generation(self, root: Path, expected_identity: tuple[int, int]) -> None:
+        self._validate_root_path()
+        try:
+            path_metadata = root.lstat()
+        except OSError:
+            raise McpHandoffError from None
+        if _identity(path_metadata) != expected_identity:
             raise McpHandoffError
         try:
             shutil.rmtree(root)
         except OSError:
             raise McpHandoffError from None
-        self._active_roots.remove(root)
+
+    def _close_generation(self, root: Path) -> None:
+        expected_identity = self._active_roots.get(root)
+        if root.parent != self._root or expected_identity is None:
+            raise McpHandoffError
+        self._remove_generation(root, expected_identity)
+        del self._active_roots[root]
 
     def close(self) -> None:
         if self._closed:
             return
         cleanup_failed = False
-        for root in list(self._active_roots):
+        for root, expected_identity in list(self._active_roots.items()):
             try:
-                shutil.rmtree(root)
-            except OSError:
+                self._remove_generation(root, expected_identity)
+            except McpHandoffError:
                 cleanup_failed = True
             else:
-                self._active_roots.remove(root)
+                del self._active_roots[root]
         if cleanup_failed:
             raise McpHandoffError
         try:
             if not self._root_removed:
+                self._validate_root_path()
                 shutil.rmtree(self._root)
                 self._root_removed = True
-            if self._lease_fd is not None:
-                os.close(self._lease_fd)
-                self._lease_fd = None
+            for descriptor_name in ("_lease_fd", "_root_fd", "_parent_fd"):
+                descriptor = getattr(self, descriptor_name)
+                if descriptor is not None:
+                    os.close(descriptor)
+                    setattr(self, descriptor_name, None)
         except OSError:
             raise McpHandoffError from None
         self._closed = True
