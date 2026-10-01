@@ -215,6 +215,7 @@ class AgyAgent:
         self._orphaned_processes: set[AgyProcess] = set()
         self._admission_lock = asyncio.Lock()
         self._starting_sessions = 0
+        self._starting_tasks: set[asyncio.Task[object]] = set()
         self._closing = False
 
     async def initialize(self, *, protocol_version: int) -> InitializeResponse:
@@ -306,11 +307,17 @@ class AgyAgent:
                         self._orphaned_processes.add(process)
                 raise
         finally:
-            if reserved:
-                async with self._admission_lock:
+            async with self._admission_lock:
+                if reserved:
                     self._starting_sessions -= 1
+                current = asyncio.current_task()
+                if current is not None:
+                    self._starting_tasks.discard(current)
 
     async def _reserve_session(self) -> None:
+        current = asyncio.current_task()
+        if current is None:
+            raise AcpRequestError(-32603, "Internal error")
         async with self._admission_lock:
             if self._closing:
                 raise _backend_unavailable()
@@ -318,6 +325,7 @@ class AgyAgent:
             if admitted >= self._config.max_sessions:
                 raise AcpRequestError(-32014, "Session capacity exceeded")
             self._starting_sessions += 1
+            self._starting_tasks.add(current)
 
     def _remaining_prompt_time(self, deadline: float) -> float:
         remaining = deadline - asyncio.get_running_loop().time()
@@ -807,21 +815,50 @@ class AgyAgent:
         self._closing = True
         sessions = list(self._sessions.values())
         self._sessions.clear()
-        cleanups: list[asyncio.Task[object]] = []
+        owned_tasks: list[asyncio.Task[object]] = []
+        process_cleanups: list[asyncio.Task[None]] = []
+        cleanup_processes: list[AgyProcess] = []
         current = asyncio.current_task()
+        for task in list(self._starting_tasks):
+            if task is not current:
+                task.cancel()
+                owned_tasks.append(task)
         for session in sessions:
             session.cancel_requested = True
             cleanup = self._start_cancel_cleanup(session)
             session.cancel_event.set()
-            if cleanup is not None:
-                cleanups.append(cleanup)
+            if cleanup is not None and session.cancel_process is not None:
+                process_cleanups.append(cleanup)
+                cleanup_processes.append(session.cancel_process)
             active_prompt = session.active_prompt
             if active_prompt is not None and active_prompt is not current:
                 active_prompt.cancel()
-                cleanups.append(active_prompt)
+                owned_tasks.append(active_prompt)
         for process in self._orphaned_processes:
-            cleanups.append(asyncio.create_task(process.cancel()))
+            process_cleanups.append(asyncio.create_task(process.cancel()))
+            cleanup_processes.append(process)
         self._orphaned_processes.clear()
-        results = await asyncio.gather(*cleanups, return_exceptions=True)
-        if any(isinstance(result, BaseException) for result in results):
+
+        cleanup_results = await asyncio.gather(
+            *process_cleanups,
+            return_exceptions=True,
+        )
+        cleanup_failed = False
+        for process, result in zip(cleanup_processes, cleanup_results, strict=True):
+            if isinstance(result, BaseException):
+                self._orphaned_processes.add(process)
+        await asyncio.gather(*owned_tasks, return_exceptions=True)
+
+        late_orphans = list(self._orphaned_processes)
+        self._orphaned_processes.clear()
+        if late_orphans:
+            late_results = await asyncio.gather(
+                *(process.cancel() for process in late_orphans),
+                return_exceptions=True,
+            )
+            for process, result in zip(late_orphans, late_results, strict=True):
+                if isinstance(result, BaseException):
+                    self._orphaned_processes.add(process)
+                    cleanup_failed = True
+        if cleanup_failed:
             raise BackendShutdownError

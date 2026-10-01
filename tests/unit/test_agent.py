@@ -1006,3 +1006,46 @@ async def test_close_launch_cleanup_failure_quarantines_process(
             await agent.close_session(session.session_id)
 
     await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_connection_close_retries_orphan_from_cancelled_session_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    marker_root = tmp_path / "markers"
+    marker_root.mkdir()
+    agent = AgyAgent(
+        agent_config(
+            tmp_path,
+            "slow-init-marker",
+            init_timeout=2,
+            marker_root=marker_root,
+        ),
+        send_update,
+    )
+    starting = asyncio.create_task(agent.new_session(cwd=str(tmp_path), mcp_servers=[]))
+    async with asyncio.timeout(2):
+        while not (marker_root / "initial-started").exists():
+            await asyncio.sleep(0.01)
+
+    cancel_calls = 0
+    original_cancel = AgyProcess.cancel
+
+    async def fail_once(process: AgyProcess) -> None:
+        nonlocal cancel_calls
+        cancel_calls += 1
+        if cancel_calls == 1:
+            raise BackendShutdownError
+        await original_cancel(process)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(AgyProcess, "cancel", fail_once)
+        await agent.close()
+
+    with pytest.raises(AcpRequestError, match="Backend unavailable"):
+        await starting
+    assert cancel_calls == 2

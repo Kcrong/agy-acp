@@ -55,6 +55,11 @@ if MODE == "no-init":
     raise SystemExit(7)
 if MODE == "slow-init":
     time.sleep(30)
+if MODE == "slow-init-marker":
+    if MARKER_ROOT is None:
+        raise SystemExit(12)
+    (MARKER_ROOT / "initial-started").write_text("started", encoding="utf-8")
+    time.sleep(30)
 if MODE == "restart-slow-init" and "--conversation" in sys.argv[2:]:
     if MARKER_ROOT is not None:
         (MARKER_ROOT / "restart-started").write_text("started", encoding="utf-8")
