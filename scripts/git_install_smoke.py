@@ -13,7 +13,6 @@ import sys
 import tempfile
 import threading
 import time
-import venv
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, BinaryIO, ClassVar
@@ -327,10 +326,11 @@ def run_smoke(repository: str, revision: str) -> None:
     ) as temporary_directory:
         root = Path(temporary_directory)
         environment = root / "venv"
-        try:
-            venv.EnvBuilder(with_pip=True, clear=True).create(environment)
-        except OSError as error:
-            raise RuntimeError("Environment setup failed") from error
+        _run(
+            "Environment setup",
+            [sys.executable, "-m", "venv", str(environment)],
+            root=root,
+        )
         python = _environment_python(environment)
         _run(
             "Git installation",

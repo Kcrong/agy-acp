@@ -75,20 +75,28 @@ def test_run_does_not_inherit_ambient_secret(
     assert output == "missing"
 
 
-def test_run_bounds_output_while_process_is_running(tmp_path: Path) -> None:
-    marker = tmp_path / "output-process-survived"
-    code = (
+def test_run_bounds_output_and_terminates_descendants(tmp_path: Path) -> None:
+    started = tmp_path / "output-descendant-started"
+    survived = tmp_path / "output-descendant-survived"
+    descendant = (
         "import sys, time; from pathlib import Path; "
+        f"Path({str(started)!r}).write_text('started', encoding='utf-8'); "
         "sys.stdout.write('x' * 70000); sys.stdout.flush(); "
-        f"time.sleep(1); Path({str(marker)!r}).write_text('alive', encoding='utf-8')"
+        f"time.sleep(0.8); Path({str(survived)!r}).write_text('alive', encoding='utf-8')"
+    )
+    parent = (
+        "import subprocess, sys, time; "
+        f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); time.sleep(30)"
     )
 
-    started = time.monotonic()
+    before = time.monotonic()
     with pytest.raises(RuntimeError, match="output exceeded"):
-        _run("Output probe", [sys.executable, "-c", code], root=tmp_path)
+        _run("Output probe", [sys.executable, "-c", parent], root=tmp_path)
 
-    assert time.monotonic() - started < 1.0
-    assert not marker.exists()
+    assert started.exists()
+    assert time.monotonic() - before < 1.0
+    time.sleep(1.0)
+    assert not survived.exists()
 
 
 def test_run_failure_diagnostic_is_structural_only(tmp_path: Path) -> None:
@@ -111,6 +119,29 @@ def _descendant_program(started: Path, survived: Path) -> str:
         f"Path({str(started)!r}).write_text('started', encoding='utf-8'); "
         f"time.sleep(0.8); Path({str(survived)!r}).write_text('alive', encoding='utf-8')"
     )
+
+
+def test_run_failure_terminates_started_descendants(tmp_path: Path) -> None:
+    started = tmp_path / "failure-descendant-started"
+    survived = tmp_path / "failure-descendant-survived"
+    descendant = _descendant_program(started, survived)
+    parent = (
+        "import subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        f"subprocess.Popen([sys.executable, '-c', {descendant!r}])\n"
+        "deadline = time.monotonic() + 2\n"
+        f"started = Path({str(started)!r})\n"
+        "while not started.exists() and time.monotonic() < deadline:\n"
+        "    time.sleep(0.01)\n"
+        "raise SystemExit(7)\n"
+    )
+
+    with pytest.raises(RuntimeError, match="failed with exit code 7"):
+        _run("Failure tree probe", [sys.executable, "-c", parent], root=tmp_path)
+
+    assert started.exists()
+    time.sleep(1.0)
+    assert not survived.exists()
 
 
 def test_run_timeout_terminates_started_descendants(tmp_path: Path) -> None:
