@@ -76,16 +76,19 @@ if MODE in {"descendant", "idle-exit-descendant"}:
         raise SystemExit(9)
     started = MARKER_ROOT / f"descendant-started-{os.getpid()}"
     survived = MARKER_ROOT / f"descendant-survived-{os.getpid()}"
-    code = (
-        "import time; from pathlib import Path; "
-        f"Path({str(started)!r}).write_text('started', encoding='utf-8'); "
-        f"time.sleep(1.2); Path({str(survived)!r}).write_text('alive', encoding='utf-8')"
-    )
+    descendant_command = [
+        "/bin/sh",
+        "-c",
+        'printf "%s" started > "$1"; sleep 1.2; printf "%s" alive > "$2"',
+        "agy-descendant",
+        str(started),
+        str(survived),
+    ]
     if MODE == "idle-exit-descendant":
-        subprocess.Popen([sys.executable, "-c", code])
+        subprocess.Popen(descendant_command)
     else:
         subprocess.Popen(
-            [sys.executable, "-c", code],
+            descendant_command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
