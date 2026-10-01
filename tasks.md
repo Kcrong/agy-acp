@@ -2,11 +2,11 @@
 
 ## 상태
 
-- 현재 단계: public-release readiness loop round 3 — PR #4 CI and merge gate
-- 작업 branch: `chore/public-release-readiness`
-- merged baseline: PR #2, `main` `343ded8`
-- repository state: PRIVATE. Public visibility 전환과 default-history replacement는 마지막 human-only gate입니다.
-- 다음 작업: final status-only diff를 독립 검토하고 PR #4를 merge한 뒤, hosted quota와 human-only public transition gates를 계속 추적합니다.
+- 현재 단계: public-release readiness loop round 5 — hosted CI green; human launch gates
+- 작업 branch: `chore/public-launch-gates`
+- merged baseline: PR #4, `main` `6c51778`
+- repository state: PRIVATE. Public visibility 전환과 retained-metadata path 결정은 마지막 human-only gate입니다.
+- 다음 작업: PR #5를 final review·merge한 뒤 root metadata 수용 방식, required-review policy, visibility 전환을 하나의 explicit launch decision으로 요청합니다.
 - 완료 조건: secret·machine data scan clean, hosted multi-OS gate, independent public-readiness review, readiness PR merge, explicit visibility approval, post-public ruleset/security verification. npm publish는 별도 explicit release gate입니다.
 
 ## 조사 메모
@@ -77,7 +77,7 @@
 - [x] Tracked files, patch history, installed package의 credential·machine-path content scan은 clean입니다.
 - [x] Hosted CI run 36696258541의 Linux/macOS/Windows 4개 job 모두 `runner_id=0`, steps `[]`로 runner allocation 전에 실패해 Actions 사용량 소진임을 확인했습니다.
 - [x] Feature range의 machine-derived metadata는 `adfc153`을 GitHub noreply identity로 rewrite한 뒤 scan clean을 확인했습니다.
-- [ ] Inherited `main` root `21334d1`의 machine-derived metadata는 feature branch만 rewrite해서 제거할 수 없습니다. Public visibility 전 별도 default-history rewrite 승인이 필요합니다.
+- [ ] Inherited `main` root `21334d1`의 machine-derived metadata는 feature branch나 current `main`-only rewrite로 완전히 제거할 수 없습니다. Public visibility 전 Low metadata를 수용하거나 zero-metadata용 clean squashed repository를 별도로 생성해야 합니다.
 
 ## 독립 리뷰 1차 결과
 
@@ -85,7 +85,7 @@
 - Public release: Critical 0, High 2, Medium 5, Low 3 — NOT READY.
 - High remediation: prompt activation 전 cancel 유실, 이전 process 종료 전 lazy restart, disconnect 중 startup 누수/closeAll barrier 부재, downstream notification backpressure 부재.
 - Medium remediation: stdout EOF/child close ordering, write failure retire, session admission limit, process-tree termination, executable absolute resolution, concurrent load reservation, SDK request AbortSignal, event phase ordering, invalid path error mapping, backend text 기반 cancel 오분류.
-- Public 후속: packed clean smoke는 이미 local 통과했습니다. Windows process E2E와 hosted matrix는 Actions quota 복구 후 필요하며 `private:true` 제거와 root history rewrite는 실제 공개 release gate로 유지합니다.
+- 당시 Public 후속: packed clean smoke는 local 통과했고 hosted matrix와 retained-metadata path 결정이 publication gate였습니다. Hosted matrix는 이후 PR #5에서 통과했습니다.
 - Low corrections: packaged README의 SECURITY link, CI npm version 계약, unknown-event diagnostic 문서 정확성.
 
 ## 리뷰 지적 수정 기록
@@ -122,7 +122,7 @@
 - 남은 High: async stdin EPIPE unhandled, close 중 session ID/admission 조기 해제, failed init 종료 전 startup barrier 해제.
 - 남은 Medium: new/load request cancellation, active close cancellation semantics, lazy-start cancel arbitration, result listener barrier, Windows taskkill failure fallback.
 - 남은 Low/current: busy error classification, streamed final suffix, design-doc 3곳과 PR evidence drift.
-- Publication-only: root metadata rewrite, hosted macOS/Windows green, Windows package shim, npm scope ownership, private vulnerability reporting, release 때 `private:true` 제거.
+- 당시 Publication-only: retained-metadata path 결정, hosted macOS/Windows green, Windows package shim, npm scope ownership, private vulnerability reporting, release 때 `private:true` 제거였습니다. Hosted evidence와 package shim은 이후 완료했습니다.
 - [x] High: persistent stdin error listener와 write callback+drain barrier로 async EPIPE를 `WRITE_FAILED` fatal shutdown으로 전환합니다.
 - [x] High: close 중 session ID와 admission slot을 process retirement 완료까지 유지합니다.
 - [x] High: pre-init failure는 child shutdown/close barrier 후에만 `start()`를 reject해 failed startup retry가 process cap을 우회하지 못합니다.
@@ -163,7 +163,7 @@
 - [x] Remediation 전체 unit 98/98, mock E2E 8/8, package smoke, real `agy` 1/1, lint, typecheck, build를 통과했습니다.
 - [x] Remediation exact head `ed119b6` focused independent review: Critical 0, High 0, Medium 0, Low 0 — PASS.
 - [x] Current code merge scope의 rebase, local validation, package/real smoke, history scan, review remediation과 final review evidence가 완료됐습니다. GitHub merge state는 PR record로 확인합니다.
-- [ ] Public-only inherited-root gate: `main`의 root `21334d1` metadata는 public visibility 전에 별도 default-history rewrite 결정이 필요합니다.
+- [ ] Public-only retained-metadata gate: Current repository의 Low metadata를 명시적으로 수용하거나, zero-metadata가 필수이면 clean squashed public repository를 별도로 생성합니다.
 
 
 ## 진행 중
@@ -188,7 +188,7 @@
 
 ## 대기
 
-- [ ] GitHub Actions 실행: 사용량이 복구될 때까지 실행 전 quota 실패는 허용하되 workflow는 작성합니다.
+- [x] GitHub Actions capacity가 복구됐고 [PR #5](https://github.com/Kcrong/agy-acp/pull/5) run `36798755644`에서 hosted matrix 4개 job이 실제 runner에서 통과했습니다.
 
 ## Public readiness loop
 
@@ -200,19 +200,25 @@
 - [x] Package `@kcrong/agy-acp@0.1.0`은 Apache-2.0·public publish config이지만 `private:true` guard를 유지합니다.
 - [x] Independent public-exposure audit: 65 retained source revisions, 63 trees, 210 text blobs, 3 PRs, 23 Actions runs/92 jobs, simulated 24-file package를 count-only/redacted scan했습니다.
 - [x] Secret exposure Critical 0, High 0. Executed Actions steps·logs·artifacts는 모두 0이며 모든 jobs가 runner 미할당 상태입니다.
-- [ ] Medium: hosted CI를 실제 runner에서 통과시키고 default branch ruleset에 required checks와 approving review 1개를 추가합니다.
+- [x] Hosted CI: [PR #5](https://github.com/Kcrong/agy-acp/pull/5) run `36798755644`에서 Ubuntu Node 22/24, macOS Node 22, Windows Node 22가 모두 non-zero runner를 배정받아 성공했습니다.
+- [ ] Medium: default branch ruleset에 required checks와 approving review 1개를 추가합니다. Owner 외 eligible reviewer가 0명이므로 사용자 결정 전에는 적용하지 않습니다.
 - [x] Future ruleset payload를 4 hosted check contexts, approval 1, stale dismissal, last-push approval, thread resolution으로 dry-run 검증했습니다. CI green과 eligible reviewer 확보 전에는 적용하지 않습니다.
 - [x] Current branch full validation: unit 98/98, mock E2E 8/8, package smoke, real `agy` 1/1, lint, typecheck, build 통과.
 - [x] `57aeb94` independent review: Critical 0, High 0, Medium 1, Low 1 — stale hosted-CI 완료 표기와 non-actionable conduct contact를 발견했습니다.
 - [x] Hosted status를 workflow/attempt evidence로 정정하고 conduct concern을 public-launch private report form으로 연결했습니다.
 - [ ] Low: root/retained machine identity를 accept 또는 remediate 결정합니다.
+- [x] Root decision analysis: current-main rewrite만으로는 retained PR/Actions objects의 older identity가 남습니다. Current repo에서 Low metadata를 명시적으로 accept하거나, zero-metadata가 필수이면 clean squashed public repository를 새로 만드는 두 경로만 완전합니다. Main force rewrite 단독은 권장하지 않습니다.
 - [x] Low Actions policy: repository-level full commit SHA pinning을 enabled로 전환했습니다.
 - [x] Low community metadata: description·5 topics, Code of Conduct, CODEOWNERS, concise PR template, bug/feature forms, security routing을 추가하고 YAML/package exclusion을 검증했습니다.
 - [x] Low package gate: `prepack`에 full check + package smoke를 포함하고 outer npm dry-run inheritance regression을 수정했습니다.
 - [x] Public-readiness metadata/docs/settings를 구현·검증하고 [PR #4](https://github.com/Kcrong/agy-acp/pull/4)를 concise English body로 생성했습니다.
 - [x] `06cf88b` focused re-review: Critical 0, High 0, Medium 0, Low 0 — PASS.
 - [x] PR #4 exact-head run `36745830565`: 4 jobs 모두 `runner_id=0`, steps 0인 pre-allocation failure로 code steps가 실행되지 않았습니다.
-- [ ] Hosted matrix, default-history replacement, visibility flip, npm publish의 외부/human gates를 순서대로 처리합니다.
+- [x] [PR #4](https://github.com/Kcrong/agy-acp/pull/4)를 squash merge했고 `main` `6c51778` tree가 reviewed head와 동일함을 확인했습니다.
+- [x] Merged-main run `36746762176`도 4 jobs 모두 runner 미할당·steps 0으로 pre-allocation 실패했습니다.
+- [x] Owner 외 direct collaborator와 required-review eligible reviewer는 모두 0명입니다.
+- [x] Merged community profile은 100%이며 Code of Conduct, CONTRIBUTING, license, PR template, README가 인식되고 issue forms도 tracked 상태입니다.
+- [ ] Retained-metadata path, required-review policy, visibility flip, npm publish의 human gates를 순서대로 처리합니다.
 
 ## 반복 운영 규칙
 
