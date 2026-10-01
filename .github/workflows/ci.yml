@@ -69,7 +69,7 @@ jobs:
         run: uv run --frozen pytest
 
       - name: Build distributions
-        run: uv build
+        run: uv build --no-build-isolation
 
       - name: Verify exact Git installation
         run: >-
