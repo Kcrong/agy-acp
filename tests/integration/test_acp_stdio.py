@@ -111,6 +111,7 @@ async def new_session(process: asyncio.subprocess.Process, cwd: Path) -> str:
     )
     response = await receive(process)
     assert response["id"] == 2
+    assert "result" in response, response
     return str(response["result"]["sessionId"])
 
 
