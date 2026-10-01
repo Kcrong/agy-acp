@@ -239,7 +239,13 @@ class AgyAgent:
                 if Path(process.init_event.cwd).resolve() != workspace.resolve():
                     raise _backend_unavailable()
                 session_id = process.init_event.conversation_id
-                await process.close()
+                if not session_id or "\x00" in session_id:
+                    raise _backend_unavailable()
+                try:
+                    await process.close()
+                except BackendProcessError:
+                    self._orphaned_processes.add(process)
+                    raise _backend_unavailable() from None
                 async with self._admission_lock:
                     if self._closing or session_id in self._sessions:
                         raise _backend_unavailable()
@@ -251,7 +257,11 @@ class AgyAgent:
                     reserved = False
                 return NewSessionResponse(session_id=session_id)
             except BaseException:
-                await process.close()
+                if process not in self._orphaned_processes and not process.closed:
+                    try:
+                        await process.close()
+                    except BackendProcessError:
+                        self._orphaned_processes.add(process)
                 raise
         finally:
             if reserved:
@@ -319,6 +329,8 @@ class AgyAgent:
         try:
             async with asyncio.timeout(self._remaining_prompt_time(deadline)):
                 process = await AgyProcess.launch(process_config)
+        except BackendTimeoutError:
+            raise AcpRequestError(-32011, "Initialization timed out") from None
         except TimeoutError:
             raise BackendTimeoutError from None
         try:
@@ -483,8 +495,12 @@ class AgyAgent:
         except BackendProcessError:
             if self._is_cancelling(session):
                 return await self._finish_cancellation(session_id, session)
-            if process is not None and session.process is process:
-                session.process = None
+            if process is not None:
+                if process.closed:
+                    if session.process is process:
+                        session.process = None
+                else:
+                    await self._mark_unusable(session_id, session, process)
             raise _backend_unavailable() from None
         except AcpRequestError:
             if self._is_cancelling(session):

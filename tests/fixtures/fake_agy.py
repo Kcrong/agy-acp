@@ -11,6 +11,7 @@ from pathlib import Path
 MODE = sys.argv[1]
 MARKER_ROOT = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 CONVERSATION_ID = "fake-session"
+INIT_CONVERSATION_ID = "fake\x00session" if MODE == "nul-conversation" else CONVERSATION_ID
 
 
 def emit(payload: dict[str, object]) -> None:
@@ -54,6 +55,8 @@ if MODE == "no-init":
     raise SystemExit(7)
 if MODE == "slow-init":
     time.sleep(30)
+if MODE == "restart-slow-init" and "--conversation" in sys.argv[2:]:
+    time.sleep(30)
 
 if MODE in {"ignore-term", "descendant", "idle-exit-descendant"}:
     signal.signal(signal.SIGTERM, ignore_signal)
@@ -82,7 +85,7 @@ if MODE in {"descendant", "idle-exit-descendant"}:
 emit(
     {
         "event": "init",
-        "conversation_id": CONVERSATION_ID,
+        "conversation_id": INIT_CONVERSATION_ID,
         "init": {
             "cwd": os.getcwd(),
             "permission_mode": "request-review",
