@@ -359,3 +359,20 @@ async def test_parser_fault_closed_is_a_task_quiescence_barrier(tmp_path: Path) 
     assert process.closed
     await asyncio.sleep(0)
     assert not _active_process_tasks()
+
+
+@pytest.mark.asyncio
+async def test_fault_cleanup_exception_is_observed_without_payload(tmp_path: Path) -> None:
+    process = await AgyProcess.launch(config(tmp_path, "normal"))
+
+    async def fail_cleanup() -> None:
+        raise RuntimeError("credential-sentinel")
+
+    cleanup = asyncio.create_task(fail_cleanup())
+    cleanup.add_done_callback(process._observe_fault_cleanup)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert process.fault_cleanup_failed
+    assert cleanup.done()
+    await process.close()

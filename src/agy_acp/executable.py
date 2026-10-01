@@ -19,30 +19,14 @@ class AgyCommand:
             raise ValueError("prefix arguments must not contain NUL")
 
 
-def _executable_names(raw: str) -> tuple[str, ...]:
-    if os.name != "nt" or Path(raw).suffix:
-        return (raw,)
-    extensions = tuple(
-        extension
-        for extension in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep)
-        if extension.startswith(".")
-        and "/" not in extension
-        and "\\" not in extension
-        and "\x00" not in extension
-    )
-    return tuple(raw + extension for extension in extensions)
-
-
 def _find_bare_executable(raw: str, source_path: str) -> Path | None:
-    names = _executable_names(raw)
     for entry in source_path.split(os.pathsep):
         directory = Path(entry)
         if not entry or not directory.is_absolute():
             continue
-        for name in names:
-            candidate = directory / name
-            if candidate.is_file() and os.access(candidate, os.X_OK):
-                return candidate
+        candidate = directory / raw
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
     return None
 
 

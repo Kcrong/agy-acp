@@ -4,7 +4,7 @@
 
 ## Decision
 
-Build `agy-acp` as a Python package using the official stable ACP Python SDK schema models and the standard-library asynchronous process APIs. A project-owned strict JSON-RPC boundary validates and redacts input before SDK model construction. The package supports Python 3.13 and 3.14 on Linux, macOS, and Windows.
+Build `agy-acp` as a Python package using the official stable ACP Python SDK schema models and the standard-library asynchronous process APIs. A project-owned strict JSON-RPC boundary validates and redacts input before SDK model construction. The package supports Python 3.13 and 3.14 on Linux and macOS.
 
 The implementation is a protocol and subprocess adapter. It does not implement a model provider, credential store, network service, or terminal UI.
 
@@ -128,14 +128,14 @@ The accepted handoff must:
 - Keep each session's server set and environment isolated
 - Preserve the requested ACP `cwd`
 - Clean up all generated state after normal exit, failure, cancellation, and host crash recovery
-- Work on Linux, macOS, and Windows
+- Work on Linux and macOS
 
 If no safe handoff exists in the current `agy` interface, release remains blocked on an upstream process-scoped configuration mechanism. An empty-list-only implementation must not be described as fully ACP v1 compatible.
 
 ## Cross-platform process policy
 
 - Linux and macOS start `agy` in a new process session and signal the process group.
-- Windows starts a delayed bootstrap in a new process group, attaches it to a kill-on-close Job Object before releasing `agy`, and closes the Job handle to terminate remaining descendants.
+- Windows is not a supported platform and has no CI or process-control contract in this implementation.
 - Persistent `agy` processes run without print-mode or child timeout flags; `AgyProcess` owns all deadlines.
 - Graceful termination is attempted first.
 - Hard termination is bounded and awaited before a lifecycle is considered closed.
@@ -145,11 +145,10 @@ No platform is advertised unless its hosted matrix and process-tree tests pass.
 
 ## CI policy
 
-CI uses only standard GitHub-hosted runners in a six-cell matrix:
+CI uses only standard GitHub-hosted runners in a four-cell matrix:
 
 - `ubuntu-latest`: Python 3.13 and 3.14
 - `macos-latest`: Python 3.13 and 3.14
-- `windows-latest`: Python 3.13 and 3.14
 
 If a `latest` label points to a preview image, the workflow pins the newest stable generally available image instead.
 

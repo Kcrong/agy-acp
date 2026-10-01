@@ -80,7 +80,7 @@ The implementation must therefore prove a process-scoped handoff that:
 - Does not persist client-provided commands, arguments, or environment values in the user's workspace or global configuration
 - Keeps concurrent sessions isolated
 - Restores no shared file and leaves no sensitive crash residue
-- Works on Linux, macOS, and Windows
+- Works on Linux and macOS
 
 The project must not claim complete ACP v1 compatibility until this gate passes. If the current `agy` interface cannot provide a safe handoff, the limitation remains a release blocker rather than being hidden behind an empty-list-only implementation.
 
@@ -166,7 +166,7 @@ Known events are accepted only in the session phase where they are valid.
 Cancellation is a terminal race with exactly one winner.
 
 1. Mark the prompt as cancelling.
-2. Signal the complete process group on Linux and macOS, or the process tree on Windows.
+2. Signal the complete process group on Linux and macOS.
 3. Wait for a structured result or exit during a bounded grace period.
 4. Escalate to a hard process-tree termination if needed.
 5. Await a bounded cleanup barrier.
@@ -236,7 +236,7 @@ Every listed row needs an automated test before the first release.
 | Sessions | Capacity, concurrent sessions, duplicate prompt, idle restart, startup retirement, disconnect cleanup, unknown session |
 | Conditional surface | Complete ordered load-history replay, load failure/cancel, close idle/active/starting/duplicate, additional-directory ordering and validation |
 | Errors and redaction | Every fixed code/message, invalid params containing sensitive sentinel values, internal exception, stderr exclusion, no raw Pydantic errors |
-| Platforms | Linux process group, macOS process group, Windows process tree |
+| Platforms | Linux process group, macOS process group |
 | Runtimes | Python 3.13 and Python 3.14 |
 | Compatibility kit | ACP Test Compatibility Kit plus adapter-specific regressions |
 

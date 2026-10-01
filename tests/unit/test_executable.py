@@ -108,15 +108,10 @@ def test_bare_command_never_searches_current_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    name = "agy-probe.exe" if os.name == "nt" else "agy-probe"
+    name = "agy-probe"
     candidate = tmp_path / name
-    if os.name == "nt":
-        import shutil
-
-        shutil.copy2(sys.executable, candidate)
-    else:
-        candidate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        candidate.chmod(0o755)
+    candidate.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    candidate.chmod(0o755)
     empty_path = tmp_path / "empty-path"
     empty_path.mkdir()
     monkeypatch.chdir(tmp_path)

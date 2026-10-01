@@ -48,8 +48,6 @@ if MODE == "no-init":
 
 if MODE in {"ignore-term", "descendant", "idle-exit-descendant"}:
     signal.signal(signal.SIGTERM, ignore_signal)
-    if hasattr(signal, "SIGBREAK"):
-        signal.signal(signal.SIGBREAK, ignore_signal)
 
 if MODE == "stderr":
     os.write(sys.stderr.fileno(), b"x" * 4096)
