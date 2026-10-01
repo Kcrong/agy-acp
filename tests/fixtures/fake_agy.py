@@ -167,6 +167,22 @@ for line in sys.stdin:
         continue
     if MODE == "early-exit":
         raise SystemExit(7)
+    if MODE == "burst-exit-zero":
+        for index in range(4):
+            emit(
+                {
+                    "event": "step_update",
+                    "step_update": {
+                        "conversation_id": CONVERSATION_ID,
+                        "step_index": index,
+                        "state": "running",
+                        "step_type": "agent_response",
+                        "text_delta": "x",
+                    },
+                }
+            )
+        emit(result(response="xxxx"))
+        raise SystemExit(0)
     if MODE == "unknown":
         emit({"event": "future_event", "secret": "must-not-survive"})
     if MODE == "no-delta":

@@ -417,7 +417,11 @@ class AgyProcess:
         returncode = self._process.returncode
         self._root_exited.set()
         await self._kill_tree()
-        await self._join_tasks([self._stdout_task, self._stderr_task])
+        await asyncio.gather(
+            self._stdout_task,
+            self._stderr_task,
+            return_exceptions=True,
+        )
         if not self._discard_events and not self._events.full():
             self._events.put_nowait(_ProcessEnd(returncode))
         self._closed = True

@@ -253,3 +253,31 @@ async def test_protocol_rejects_unsafe_request_buffer_product() -> None:
             max_line_bytes=4 * 1024 * 1024,
             max_in_flight=17,
         )
+
+
+@pytest.mark.asyncio
+async def test_cancelling_idle_server_leaves_no_protocol_tasks() -> None:
+    reader = asyncio.StreamReader()
+    writer = BlockingWriter()
+    server = AcpStdioServer(
+        await make_agent(),
+        reader,
+        cast(asyncio.StreamWriter, writer),
+        max_line_bytes=4096,
+    )
+    serving = asyncio.create_task(server.serve())
+    await asyncio.sleep(0)
+
+    serving.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await serving
+    await asyncio.sleep(0)
+
+    current = asyncio.current_task()
+    leaked = [
+        task.get_name()
+        for task in asyncio.all_tasks()
+        if task is not current and not task.done() and task.get_name().startswith("agy-acp.")
+    ]
+    assert leaked == []
+    assert writer.closed

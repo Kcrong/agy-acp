@@ -25,6 +25,8 @@ def agent_config(
     prompt_timeout: float = 2,
     init_timeout: float = 2,
     max_sessions: int = 16,
+    max_pending_events: int = 8,
+    kill_grace: float = 1,
     marker_root: Path | None = None,
 ) -> AgentConfig:
     prefix_args: tuple[str, ...] = ("-u", str(FIXTURE), mode)
@@ -37,13 +39,13 @@ def agent_config(
         ),
         max_line_bytes=4096,
         max_stderr_bytes=64,
-        max_pending_events=8,
+        max_pending_events=max_pending_events,
         max_sessions=max_sessions,
         init_timeout=init_timeout,
         write_timeout=1,
         prompt_timeout=prompt_timeout,
         cancel_grace=0.1,
-        kill_grace=1,
+        kill_grace=kill_grace,
     )
 
 
@@ -1340,3 +1342,37 @@ def test_agent_config_rejects_unsafe_global_event_buffer_product(tmp_path: Path)
             max_pending_events=4,
             max_sessions=16,
         )
+
+
+@pytest.mark.asyncio
+async def test_clean_exit_drains_saturated_queue_before_process_end(
+    tmp_path: Path,
+) -> None:
+    updates: list[str] = []
+
+    async def send_update(_session_id: str, update: dict[str, object]) -> None:
+        await asyncio.sleep(0.2)
+        content = cast(dict[str, object], update["content"])
+        updates.append(cast(str, content["text"]))
+
+    agent = AgyAgent(
+        agent_config(
+            tmp_path,
+            "burst-exit-zero",
+            max_pending_events=2,
+            kill_grace=0.05,
+            prompt_timeout=2,
+        ),
+        send_update,
+    )
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+
+    response = await agent.prompt(
+        session_id=session.session_id,
+        prompt=[{"type": "text", "text": "hello"}],
+    )
+
+    assert response.stop_reason == "end_turn"
+    assert updates == ["x", "x", "x", "x"]
+    await agent.close_session(session.session_id)
+    await agent.close()

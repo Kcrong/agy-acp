@@ -139,9 +139,10 @@ class AcpStdioServer:
                 return b""
             return reading.result()
         finally:
-            if not output_failed.done():
-                output_failed.cancel()
-            await asyncio.gather(output_failed, return_exceptions=True)
+            for task in (reading, output_failed):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(reading, output_failed, return_exceptions=True)
 
     async def serve(self) -> None:
         parser = NdjsonParser(max_line_bytes=self._max_line_bytes)
