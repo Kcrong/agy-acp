@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 from collections.abc import Mapping
 
+from acp import PROTOCOL_VERSION
 from acp.schema import InitializeRequest
 from pydantic import BaseModel, ValidationError
 
@@ -159,19 +160,22 @@ class AcpStdioServer:
         if request_id in self._requests or len(self._requests) >= self._max_in_flight:
             await self._send_error(request_id, -32600, "Invalid request")
             return
+        started = asyncio.Event()
         task = asyncio.create_task(
-            self._run_request(request_id, method, message),
+            self._run_request(request_id, method, message, started),
             name=f"agy-acp.request.{method}",
         )
         self._requests[request_id] = task
 
         def remove_request(completed: asyncio.Task[None]) -> None:
+            started.set()
             if self._requests.get(request_id) is completed:
                 self._requests.pop(request_id, None)
             if not completed.cancelled():
                 completed.exception()
 
         task.add_done_callback(remove_request)
+        await started.wait()
 
     @staticmethod
     def _validate_envelope(message: Mapping[str, object]) -> tuple[RequestId | None, str]:
@@ -194,8 +198,10 @@ class AcpStdioServer:
         request_id: RequestId,
         method: str,
         message: Mapping[str, object],
+        started: asyncio.Event,
     ) -> None:
         try:
+            started.set()
             result = await self._dispatch_request(method, message)
             await self._send_result_uninterruptibly(request_id, result)
         except asyncio.CancelledError:
@@ -247,6 +253,8 @@ class AcpStdioServer:
             except ValidationError:
                 raise _invalid_params() from None
             if not _same_json_shape(dict(params), normalized):
+                raise _invalid_params()
+            if request.protocol_version < PROTOCOL_VERSION:
                 raise _invalid_params()
             result = await self._agent.initialize(protocol_version=request.protocol_version)
             self._initialized = True

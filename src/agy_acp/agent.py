@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -51,7 +51,6 @@ class AgentConfig:
     init_timeout: float = 15.0
     write_timeout: float = 15.0
     prompt_timeout: float = 30 * 60.0
-    response_barrier: float = 0.01
     cancel_grace: float = 5.0
     kill_grace: float = 2.0
 
@@ -68,25 +67,18 @@ class AgentConfig:
             raise ValueError("prompt_timeout must be positive and finite") from None
         if not math.isfinite(timeout) or timeout <= 0:
             raise ValueError("prompt_timeout must be positive and finite")
-        if isinstance(self.response_barrier, bool) or not isinstance(
-            self.response_barrier, int | float
-        ):
-            raise ValueError("response_barrier must be positive and finite")
-        try:
-            barrier = float(self.response_barrier)
-        except OverflowError:
-            raise ValueError("response_barrier must be positive and finite") from None
-        if not math.isfinite(barrier) or barrier <= 0:
-            raise ValueError("response_barrier must be positive and finite")
 
 
 @dataclass(slots=True)
 class _Session:
-    process: AgyProcess
+    process_config: AgyProcessConfig
+    process: AgyProcess | None
     active_prompt: asyncio.Task[object] | None = None
     cancel_requested: bool = False
     cancel_event: asyncio.Event = field(default_factory=asyncio.Event)
     cancel_cleanup: asyncio.Task[None] | None = None
+    cancel_process: AgyProcess | None = None
+    unusable: bool = False
 
 
 def _invalid_params() -> AcpRequestError:
@@ -197,6 +189,7 @@ class AgyAgent:
         self._config = config
         self._send_update = send_update
         self._sessions: dict[str, _Session] = {}
+        self._orphaned_processes: set[AgyProcess] = set()
         self._admission_lock = asyncio.Lock()
         self._starting_sessions = 0
         self._closing = False
@@ -246,10 +239,14 @@ class AgyAgent:
                 if Path(process.init_event.cwd).resolve() != workspace.resolve():
                     raise _backend_unavailable()
                 session_id = process.init_event.conversation_id
+                await process.close()
                 async with self._admission_lock:
                     if self._closing or session_id in self._sessions:
                         raise _backend_unavailable()
-                    self._sessions[session_id] = _Session(process)
+                    self._sessions[session_id] = _Session(
+                        process_config=process_config,
+                        process=None,
+                    )
                     self._starting_sessions -= 1
                     reserved = False
                 return NewSessionResponse(session_id=session_id)
@@ -277,13 +274,13 @@ class AgyAgent:
 
     async def _send_prompt_before_deadline(
         self,
-        session: _Session,
+        process: AgyProcess,
         message: object,
         deadline: float,
     ) -> None:
         try:
             async with asyncio.timeout(self._remaining_prompt_time(deadline)):
-                await session.process.send(message)
+                await process.send(message)
         except TimeoutError:
             raise BackendTimeoutError from None
 
@@ -300,22 +297,96 @@ class AgyAgent:
         except TimeoutError:
             raise BackendTimeoutError from None
 
-    async def _verify_response_barrier(
+    async def _launch_generation(
         self,
+        session_id: str,
         session: _Session,
         deadline: float,
-    ) -> None:
+    ) -> AgyProcess:
+        if session.unusable:
+            raise AcpRequestError(-32015, "Session not found")
+        current = session.process
+        if current is not None and current.returncode is None and not current.closed:
+            return current
+        if current is not None:
+            session.process = None
+            try:
+                await current.cancel()
+            except BackendProcessError:
+                await self._mark_unusable(session_id, session, current)
+                raise
+        process_config = replace(session.process_config, conversation_id=session_id)
         try:
             async with asyncio.timeout(self._remaining_prompt_time(deadline)):
-                await asyncio.sleep(self._config.response_barrier)
+                process = await AgyProcess.launch(process_config)
         except TimeoutError:
             raise BackendTimeoutError from None
-        if session.process.pending_events:
-            raise _backend_unavailable()
+        try:
+            if (
+                process.init_event.conversation_id != session_id
+                or Path(process.init_event.cwd).resolve() != process_config.cwd.resolve()
+                or self._closing
+                or self._sessions.get(session_id) is not session
+            ):
+                raise _backend_unavailable()
+        except BaseException:
+            try:
+                await process.cancel()
+            except BackendProcessError:
+                self._orphaned_processes.add(process)
+            raise
+        session.process = process
+        session.cancel_cleanup = None
+        session.cancel_process = None
+        return process
 
-    async def _terminate_session(self, session_id: str, session: _Session) -> None:
-        await session.process.cancel()
+    async def _mark_unusable(
+        self,
+        session_id: str,
+        session: _Session,
+        process: AgyProcess,
+    ) -> None:
+        session.unusable = True
+        if session.process is process:
+            session.process = None
+        self._orphaned_processes.add(process)
         await self._retire_session(session_id, session)
+
+    async def _close_generation(
+        self,
+        session_id: str,
+        session: _Session,
+        process: AgyProcess,
+        deadline: float,
+    ) -> None:
+        if session.process is process:
+            session.process = None
+        try:
+            async with asyncio.timeout(self._remaining_prompt_time(deadline)):
+                await process.close()
+        except TimeoutError:
+            raise BackendTimeoutError from None
+        except BackendProcessError:
+            await self._mark_unusable(session_id, session, process)
+            raise
+        session.cancel_cleanup = None
+        session.cancel_process = None
+
+    async def _terminate_generation(
+        self,
+        session_id: str,
+        session: _Session,
+        process: AgyProcess,
+    ) -> None:
+        if session.process is process:
+            session.process = None
+        try:
+            await process.cancel()
+        except BackendProcessError:
+            await self._mark_unusable(session_id, session, process)
+            raise
+        session.cancel_cleanup = None
+        session.cancel_process = None
 
     async def prompt(
         self,
@@ -324,7 +395,7 @@ class AgyAgent:
         prompt: list[Mapping[str, object]],
     ) -> PromptResponse:
         session = self._sessions.get(session_id)
-        if session is None:
+        if session is None or session.unusable:
             raise AcpRequestError(-32015, "Session not found")
         if session.active_prompt is not None:
             raise AcpRequestError(-32013, "Session busy")
@@ -339,13 +410,16 @@ class AgyAgent:
         chunks: list[str] = []
         streamed_bytes = 0
         deadline = asyncio.get_running_loop().time() + self._config.prompt_timeout
+        process: AgyProcess | None = None
         try:
-            await asyncio.sleep(0)
-            if session.process.pending_events:
+            process = await self._launch_generation(session_id, session, deadline)
+            if self._is_cancelling(session):
+                return await self._finish_cancellation(session_id, session)
+            if process.pending_events:
                 raise _backend_unavailable()
             try:
                 await self._send_prompt_before_deadline(
-                    session,
+                    process,
                     {
                         "event": "user",
                         "message": {
@@ -359,7 +433,7 @@ class AgyAgent:
                 raise _invalid_params() from None
             while True:
                 remaining = self._remaining_prompt_time(deadline)
-                event = await self._receive_or_cancel(session, remaining)
+                event = await self._receive_or_cancel(session, process, remaining)
                 if event is None:
                     return await self._finish_cancellation(session_id, session)
                 if not isinstance(event, AgyStepUpdateEvent | AgyResultEvent):
@@ -379,48 +453,56 @@ class AgyAgent:
                             deadline,
                         )
                     continue
-                await self._verify_response_barrier(session, deadline)
+                if process.pending_events:
+                    raise _backend_unavailable()
                 return await self._complete_result(
                     session,
                     session_id,
+                    process,
                     message_id,
                     chunks,
                     event,
                     deadline,
                 )
         except asyncio.CancelledError:
-            with contextlib.suppress(BackendProcessError):
-                await self._terminate_session(session_id, session)
+            if self._is_cancelling(session):
+                return await self._finish_cancellation(session_id, session)
+            if process is not None:
+                with contextlib.suppress(BackendProcessError):
+                    await self._terminate_generation(session_id, session, process)
             raise
         except BackendTimeoutError:
             if self._is_cancelling(session):
                 return await self._finish_cancellation(session_id, session)
-            try:
-                await self._terminate_session(session_id, session)
-            except BackendProcessError:
-                raise _backend_unavailable() from None
+            if process is not None:
+                try:
+                    await self._terminate_generation(session_id, session, process)
+                except BackendProcessError:
+                    raise _backend_unavailable() from None
             raise AcpRequestError(-32012, "Prompt timed out") from None
         except BackendProcessError:
             if self._is_cancelling(session):
                 return await self._finish_cancellation(session_id, session)
-            await self._retire_session(session_id, session)
+            if process is not None and session.process is process:
+                session.process = None
             raise _backend_unavailable() from None
-        except AcpRequestError as error:
+        except AcpRequestError:
             if self._is_cancelling(session):
                 return await self._finish_cancellation(session_id, session)
-            if error.code != -32602:
+            if process is not None:
                 try:
-                    await self._terminate_session(session_id, session)
+                    await self._terminate_generation(session_id, session, process)
                 except BackendProcessError:
                     raise _backend_unavailable() from None
             raise
         except Exception:
             if self._is_cancelling(session):
                 return await self._finish_cancellation(session_id, session)
-            try:
-                await self._terminate_session(session_id, session)
-            except BackendProcessError:
-                raise _backend_unavailable() from None
+            if process is not None:
+                try:
+                    await self._terminate_generation(session_id, session, process)
+                except BackendProcessError:
+                    raise _backend_unavailable() from None
             raise AcpRequestError(-32603, "Internal error") from None
         finally:
             session.active_prompt = None
@@ -428,9 +510,10 @@ class AgyAgent:
     async def _receive_or_cancel(
         self,
         session: _Session,
+        process: AgyProcess,
         timeout: float,
     ) -> AgyEvent | None:
-        receive_task = asyncio.create_task(session.process.receive(timeout=timeout))
+        receive_task = asyncio.create_task(process.receive(timeout=timeout))
         cancel_task = asyncio.create_task(session.cancel_event.wait())
         tasks = (receive_task, cancel_task)
         try:
@@ -447,21 +530,26 @@ class AgyAgent:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    def _start_cancel_cleanup(self, session: _Session) -> asyncio.Task[None]:
+    def _start_cancel_cleanup(self, session: _Session) -> asyncio.Task[None] | None:
         cleanup = session.cancel_cleanup
-        if cleanup is None:
-            cleanup = asyncio.create_task(
-                session.process.cancel(),
-                name="agy-acp.session-cancel",
-            )
-            session.cancel_cleanup = cleanup
+        if cleanup is not None:
+            return cleanup
+        process = session.process
+        if process is None:
+            return None
+        session.process = None
+        session.cancel_process = process
+        cleanup = asyncio.create_task(
+            process.cancel(),
+            name="agy-acp.session-cancel",
+        )
+        session.cancel_cleanup = cleanup
         return cleanup
 
     async def _await_cancel_cleanup(self, session: _Session) -> None:
         cleanup = session.cancel_cleanup
-        if cleanup is None:
-            raise BackendShutdownError
-        await asyncio.shield(cleanup)
+        if cleanup is not None:
+            await asyncio.shield(cleanup)
 
     async def _retire_session(self, session_id: str, session: _Session) -> None:
         async with self._admission_lock:
@@ -473,12 +561,18 @@ class AgyAgent:
         session_id: str,
         session: _Session,
     ) -> PromptResponse:
+        process = session.cancel_process
         try:
             await self._await_cancel_cleanup(session)
         except BackendProcessError:
-            await self._retire_session(session_id, session)
+            if process is not None:
+                await self._mark_unusable(session_id, session, process)
+            else:
+                session.unusable = True
+                await self._retire_session(session_id, session)
             raise _backend_unavailable() from None
-        await self._retire_session(session_id, session)
+        session.cancel_cleanup = None
+        session.cancel_process = None
         return PromptResponse(stop_reason="cancelled")
 
     @staticmethod
@@ -489,6 +583,7 @@ class AgyAgent:
         self,
         session: _Session,
         session_id: str,
+        process: AgyProcess,
         message_id: str,
         chunks: list[str],
         event: AgyResultEvent,
@@ -497,6 +592,7 @@ class AgyAgent:
         if self._is_cancelling(session):
             return await self._finish_cancellation(session_id, session)
         if event.status is AgyResultStatus.CANCELED:
+            await self._close_generation(session_id, session, process, deadline)
             return PromptResponse(stop_reason="cancelled")
         if event.status is not AgyResultStatus.SUCCESS:
             raise _backend_unavailable()
@@ -514,10 +610,11 @@ class AgyAgent:
                 suffix,
                 deadline,
             )
-        if session.process.pending_events:
+        if process.pending_events:
             raise _backend_unavailable()
         if self._is_cancelling(session):
             return await self._finish_cancellation(session_id, session)
+        await self._close_generation(session_id, session, process, deadline)
         return PromptResponse(stop_reason="end_turn")
 
     async def _emit_delta(self, session_id: str, message_id: str, delta: str) -> None:
@@ -530,13 +627,25 @@ class AgyAgent:
         session = self._sessions.get(session_id)
         if session is None:
             return
-        if session.active_prompt is None:
+        active_prompt = session.active_prompt
+        if active_prompt is None:
             return
         session.cancel_requested = True
         cleanup = self._start_cancel_cleanup(session)
         session.cancel_event.set()
-        await asyncio.shield(cleanup)
-        await self._retire_session(session_id, session)
+        if cleanup is None:
+            if active_prompt is not asyncio.current_task():
+                active_prompt.cancel()
+            return
+        try:
+            await asyncio.shield(cleanup)
+        except BackendProcessError:
+            process = session.cancel_process
+            if process is not None:
+                await self._mark_unusable(session_id, session, process)
+            raise
+        session.cancel_cleanup = None
+        session.cancel_process = None
 
     async def close(self) -> None:
         if self._closing:
@@ -544,11 +653,21 @@ class AgyAgent:
         self._closing = True
         sessions = list(self._sessions.values())
         self._sessions.clear()
-        cleanups: list[asyncio.Task[None]] = []
+        cleanups: list[asyncio.Task[object]] = []
+        current = asyncio.current_task()
         for session in sessions:
             session.cancel_requested = True
-            cleanups.append(self._start_cancel_cleanup(session))
+            cleanup = self._start_cancel_cleanup(session)
             session.cancel_event.set()
+            if cleanup is not None:
+                cleanups.append(cleanup)
+            active_prompt = session.active_prompt
+            if active_prompt is not None and active_prompt is not current:
+                active_prompt.cancel()
+                cleanups.append(active_prompt)
+        for process in self._orphaned_processes:
+            cleanups.append(asyncio.create_task(process.cancel()))
+        self._orphaned_processes.clear()
         results = await asyncio.gather(*cleanups, return_exceptions=True)
         if any(isinstance(result, BaseException) for result in results):
             raise BackendShutdownError

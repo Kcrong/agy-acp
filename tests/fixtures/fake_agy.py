@@ -177,6 +177,11 @@ for line in sys.stdin:
         emit(result())
         emit(result())
         continue
+    if MODE == "delayed-duplicate":
+        emit(result())
+        time.sleep(0.2)
+        emit(result())
+        continue
     if MODE == "late-update":
         emit(result())
         emit(

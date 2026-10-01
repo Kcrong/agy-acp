@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from agy_acp.agent import AgentConfig, AgyAgent, serialize_prompt
+from agy_acp.errors import BackendShutdownError
 from agy_acp.executable import AgyCommand
+from agy_acp.process import AgyProcess
 from agy_acp.protocol import AcpRequestError
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "fake_agy.py"
@@ -20,7 +22,6 @@ def agent_config(
     prompt_timeout: float = 2,
     init_timeout: float = 2,
     max_sessions: int = 16,
-    response_barrier: float = 0.01,
 ) -> AgentConfig:
     return AgentConfig(
         command=AgyCommand(
@@ -34,7 +35,6 @@ def agent_config(
         init_timeout=init_timeout,
         write_timeout=1,
         prompt_timeout=prompt_timeout,
-        response_barrier=response_barrier,
         cancel_grace=0.1,
         kill_grace=1,
     )
@@ -114,12 +114,20 @@ async def test_new_session_and_prompt_stream_one_message(tmp_path: Path) -> None
         session_id=session.session_id,
         prompt=[{"type": "text", "text": "hello"}],
     )
+    resumed = await agent.prompt(
+        session_id=session.session_id,
+        prompt=[{"type": "text", "text": "second"}],
+    )
 
     assert response.stop_reason == "end_turn"
-    assert len(updates) == 1
-    assert updates[0][0] == session.session_id
-    assert updates[0][1]["sessionUpdate"] == "agent_message_chunk"
-    assert updates[0][1]["content"] == {"type": "text", "text": "fake-response"}
+    assert resumed.stop_reason == "end_turn"
+    assert len(updates) == 2
+    assert {update[0] for update in updates} == {session.session_id}
+    assert all(update[1]["sessionUpdate"] == "agent_message_chunk" for update in updates)
+    assert all(
+        update[1]["content"] == {"type": "text", "text": "fake-response"} for update in updates
+    )
+    assert updates[0][1]["messageId"] != updates[1][1]["messageId"]
     await agent.close()
 
 
@@ -165,11 +173,17 @@ async def test_session_cancel_returns_cancelled_prompt(tmp_path: Path) -> None:
     response = await prompting
 
     assert response.stop_reason == "cancelled"
-    with pytest.raises(AcpRequestError, match="Session not found"):
-        await agent.prompt(
+    update_arrived.clear()
+    resumed = asyncio.create_task(
+        agent.prompt(
             session_id=session.session_id,
             prompt=[{"type": "text", "text": "second"}],
         )
+    )
+    async with asyncio.timeout(2):
+        await update_arrived.wait()
+    await agent.cancel(session.session_id)
+    assert (await resumed).stop_reason == "cancelled"
     await agent.close()
 
 
@@ -288,11 +302,12 @@ async def test_prompt_timeout_is_fixed_and_payload_free(tmp_path: Path) -> None:
         )
     assert raised.value.code == -32012
     assert "sentinel" not in str(raised.value)
-    with pytest.raises(AcpRequestError, match="Session not found"):
+    with pytest.raises(AcpRequestError, match="Prompt timed out") as retried:
         await agent.prompt(
             session_id=session.session_id,
             prompt=[{"type": "text", "text": "second"}],
         )
+    assert retried.value.code == -32012
     await agent.close()
 
 
@@ -413,10 +428,7 @@ async def test_prompt_rejects_events_outside_one_terminal_generation(
     async def send_update(_session_id: str, _update: dict[str, object]) -> None:
         return None
 
-    agent = AgyAgent(
-        agent_config(tmp_path, mode, response_barrier=0.05),
-        send_update,
-    )
+    agent = AgyAgent(agent_config(tmp_path, mode), send_update)
     session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
     if mode == "pre-result":
         await asyncio.sleep(0.05)
@@ -425,7 +437,7 @@ async def test_prompt_rejects_events_outside_one_terminal_generation(
             session_id=session.session_id,
             prompt=[{"type": "text", "text": "hello"}],
         )
-    with pytest.raises(AcpRequestError, match="Session not found"):
+    with pytest.raises(AcpRequestError, match="Backend unavailable"):
         await agent.prompt(
             session_id=session.session_id,
             prompt=[{"type": "text", "text": "second"}],
@@ -445,12 +457,19 @@ async def test_backend_cancelled_result_maps_to_cancelled(tmp_path: Path) -> Non
         session_id=session.session_id,
         prompt=[{"type": "text", "text": "hello"}],
     )
+    resumed = await agent.prompt(
+        session_id=session.session_id,
+        prompt=[{"type": "text", "text": "second"}],
+    )
     assert response.stop_reason == "cancelled"
+    assert resumed.stop_reason == "cancelled"
     await agent.close()
 
 
 @pytest.mark.asyncio
-async def test_slow_update_uses_prompt_deadline_and_retires_session(tmp_path: Path) -> None:
+async def test_slow_update_uses_prompt_deadline_and_restarts_generation(
+    tmp_path: Path,
+) -> None:
     async def send_update(_session_id: str, _update: dict[str, object]) -> None:
         await asyncio.sleep(1)
 
@@ -465,11 +484,12 @@ async def test_slow_update_uses_prompt_deadline_and_retires_session(tmp_path: Pa
             prompt=[{"type": "text", "text": "hello"}],
         )
     assert raised.value.code == -32012
-    with pytest.raises(AcpRequestError, match="Session not found"):
+    with pytest.raises(AcpRequestError, match="Prompt timed out") as retried:
         await agent.prompt(
             session_id=session.session_id,
             prompt=[{"type": "text", "text": "second"}],
         )
+    assert retried.value.code == -32012
     await agent.close()
 
 
@@ -528,9 +548,75 @@ async def test_unsolicited_nonterminal_or_failed_results_fail_closed(
             prompt=[{"type": "text", "text": "hello"}],
         )
     assert raised.value.code == -32010
-    with pytest.raises(AcpRequestError, match="Session not found"):
+    with pytest.raises(AcpRequestError, match="Backend unavailable"):
         await agent.prompt(
             session_id=session.session_id,
             prompt=[{"type": "text", "text": "second"}],
         )
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_delayed_duplicate_cannot_cross_prompt_generation(tmp_path: Path) -> None:
+    updates: list[dict[str, object]] = []
+
+    async def send_update(_session_id: str, update: dict[str, object]) -> None:
+        updates.append(update)
+
+    agent = AgyAgent(agent_config(tmp_path, "delayed-duplicate"), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+
+    first = await agent.prompt(
+        session_id=session.session_id,
+        prompt=[{"type": "text", "text": "first"}],
+    )
+    second = await agent.prompt(
+        session_id=session.session_id,
+        prompt=[{"type": "text", "text": "second"}],
+    )
+
+    assert first.stop_reason == "end_turn"
+    assert second.stop_reason == "end_turn"
+    assert [update["content"] for update in updates] == [
+        {"type": "text", "text": "fake-response"},
+        {"type": "text", "text": "fake-response"},
+    ]
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_request_cancel_cleanup_quarantines_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    update_arrived = asyncio.Event()
+
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        update_arrived.set()
+
+    agent = AgyAgent(agent_config(tmp_path, "hang"), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    prompting = asyncio.create_task(
+        agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    )
+    async with asyncio.timeout(2):
+        await update_arrived.wait()
+
+    async def fail_cancel(_process: AgyProcess) -> None:
+        raise BackendShutdownError
+
+    with monkeypatch.context() as patch:
+        patch.setattr(AgyProcess, "cancel", fail_cancel)
+        prompting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await prompting
+        with pytest.raises(AcpRequestError, match="Session not found"):
+            await agent.prompt(
+                session_id=session.session_id,
+                prompt=[{"type": "text", "text": "second"}],
+            )
+
     await agent.close()

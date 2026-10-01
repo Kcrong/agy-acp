@@ -382,9 +382,19 @@ async def test_stdio_request_level_cancellation_returns_fixed_error(tmp_path: Pa
             },
         },
     )
-    assert (await receive(process))["error"] == {
-        "code": -32015,
-        "message": "Session not found",
+    assert (await receive(process))["method"] == "session/update"
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "method": "session/cancel",
+            "params": {"sessionId": session_id},
+        },
+    )
+    assert await receive(process) == {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {"stopReason": "cancelled"},
     }
     await stop_server(process)
 
@@ -518,4 +528,49 @@ async def test_stdio_keeps_valid_record_before_coalesced_parse_error(
         response.get("error") == {"code": -32700, "message": "Parse error"}
         for response in responses
     )
+    await stop_server(process)
+
+
+@pytest.mark.asyncio
+async def test_stdio_rejects_protocol_version_without_common_v1(tmp_path: Path) -> None:
+    process = await start_server(tmp_path, "normal")
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": 0, "clientCapabilities": {}},
+        },
+    )
+    assert await receive(process) == {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {"code": -32602, "message": "Invalid params"},
+    }
+    await initialize(process)
+    await stop_server(process)
+
+
+@pytest.mark.asyncio
+async def test_stdio_coalesced_request_cancel_returns_fixed_error(tmp_path: Path) -> None:
+    process = await start_server(tmp_path, "slow-init")
+    await initialize(process)
+    request = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "session/new",
+            "params": {"cwd": str(tmp_path), "mcpServers": []},
+        },
+        separators=(",", ":"),
+    ).encode()
+    cancel = b'{"jsonrpc":"2.0","method":"$/cancel_request","params":{"requestId":2}}'
+    await send_bytes(process, request + b"\n" + cancel + b"\n")
+
+    assert await receive(process) == {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "error": {"code": -32800, "message": "Request cancelled"},
+    }
     await stop_server(process)
