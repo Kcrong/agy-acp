@@ -12,9 +12,11 @@ This document applies to all implementation and modification work within the `ag
 
 ## 2. Maintainer Ownership and Explanations
 
-- Write repository-facing explanations from a maintainer's perspective.
+- Write all pull request content and code comments in English.
+- Write repository-facing explanations from the project's maintainer perspective.
 - Explain the technical need, intended outcome, implementation, and relevant trade-offs in standalone terms.
-- Describe what changed and why it belongs in the project rather than saying that a user requested or instructed it.
+- Describe what changed and why it belongs in the project.
+- Never attribute a change to a user, requester, another maintainer, or external instruction; state the project rationale directly.
 - Apply this framing to pull requests, commits, documentation, code comments, issue updates, and other durable repository content.
 - Keep explanations accurate to the implemented behavior; do not invent rationale or hide unresolved risks.
 
