@@ -424,9 +424,7 @@ async def test_stdio_disconnect_terminates_backend_process_group(tmp_path: Path)
     )
     assert (await receive(process))["method"] == "session/update"
     started = marker_root / "descendant-started"
-    async with asyncio.timeout(2):
-        while not started.exists():
-            await asyncio.sleep(0.01)
+    assert started.exists()
 
     assert process.stdin is not None
     process.stdin.close()

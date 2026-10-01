@@ -650,7 +650,7 @@ async def test_resumed_generation_init_timeout_uses_dedicated_error(
         return None
 
     agent = AgyAgent(
-        agent_config(tmp_path, "restart-slow-init", init_timeout=0.05),
+        agent_config(tmp_path, "restart-slow-init", init_timeout=1),
         send_update,
     )
     session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
@@ -977,7 +977,7 @@ async def test_close_launch_cleanup_failure_quarantines_process(
         agent_config(
             tmp_path,
             "restart-slow-init",
-            init_timeout=0.2,
+            init_timeout=1,
             marker_root=marker_root,
         ),
         send_update,

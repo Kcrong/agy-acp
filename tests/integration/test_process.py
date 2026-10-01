@@ -152,18 +152,12 @@ async def test_ignored_graceful_signal_is_hard_killed(tmp_path: Path) -> None:
     assert process.returncode not in (None, 0)
 
 
-async def wait_for_path(path: Path) -> None:
-    async with asyncio.timeout(2):
-        while not path.exists():
-            await asyncio.sleep(0.01)
-
-
 @pytest.mark.asyncio
 async def test_cancel_terminates_descendant_tree(tmp_path: Path) -> None:
     process = await AgyProcess.launch(config(tmp_path, "descendant", str(tmp_path)))
     started = tmp_path / "descendant-started"
     survived = tmp_path / "descendant-survived"
-    await wait_for_path(started)
+    assert started.exists()
 
     await process.cancel()
     await asyncio.sleep(1.4)
@@ -177,7 +171,7 @@ async def test_idle_root_exit_reaps_descendants_in_background(tmp_path: Path) ->
     process = await AgyProcess.launch(config(tmp_path, "idle-exit-descendant", str(tmp_path)))
     started = tmp_path / "descendant-started"
     survived = tmp_path / "descendant-survived"
-    await wait_for_path(started)
+    assert started.exists()
 
     async with asyncio.timeout(2):
         while not process.closed:
