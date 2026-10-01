@@ -1,6 +1,6 @@
 # Python architecture decision
 
-**Status:** Accepted on 2026-10-01 with the stdio MCP handoff as a release gate
+**Status:** Accepted on 2026-10-01 with process-scoped stdio MCP handoff
 
 ## Decision
 
@@ -60,6 +60,7 @@ src/agy_acp/
   sessions.py
   process.py
   mcp.py
+  mcp_launcher.py
   events.py
   ndjson.py
   config.py
@@ -122,21 +123,20 @@ Every task, stream, timer, and process has one explicit owner and one bounded cl
 
 Identity resumption is therefore used only for internal process-generation continuity. `session/load` remains unregistered and its capability remains false until an upstream interface supplies complete ordered history without exposing raw conversation data through logs or persistent adapter state.
 
-## Stdio MCP handoff gate
+## Stdio MCP handoff
 
-ACP v1 requires stdio MCP support. Official Antigravity documentation and a live `agy 1.2.14` scratch probe confirm that workspace `.agents/mcp_config.json` starts stdio MCP servers. The CLI exposes no per-invocation MCP configuration flag.
+ACP client stdio MCP entries are parsed into immutable bounded specifications. HTTP, SSE, and ACP transports remain unsupported. `agy 1.2.14` has no per-invocation MCP flag and starts workspace-configured MCP servers lazily at the first prompt, so the handoff uses a private additional directory rather than writing client data into the project.
 
-Writing client-provided commands or environment values into the user's workspace is not acceptable: those values may be secrets, concurrent sessions need different configurations, and a crash could leave sensitive repository state behind. `McpHandoff` must prove a process-scoped, crash-safe path before the adapter claims complete ACP v1 compatibility.
+A process-scoped generation has two channels:
 
-The accepted handoff must:
+- A `0600` `.agents/mcp_config.json` contains collision-resistant opaque server keys and invokes the installed interpreter with `-m agy_acp.mcp_launcher <slot>`. It contains no client server name, target command, arguments, environment name, or environment value.
+- Namespaced environment overrides on that `agy` process contain the encoded bounded specifications. The launcher selects one slot, removes every internal specification variable, applies only its target environment, and executes the target directly without a shell.
 
-- Avoid persistent user-workspace and global-config mutation
-- Keep each session's server set and environment isolated
-- Preserve the requested ACP `cwd`
-- Clean up all generated state after normal exit, failure, cancellation, and host crash recovery
-- Work on Linux and macOS
+The lease-owning manager creates its owner and generation directories with mode `0700`. Client additional directories retain their order and the private config root is appended last, while `agy` continues to run in the requested project working directory. Random generation roots, config keys, and slots isolate concurrent processes and avoid collisions with project MCP names.
 
-If no safe handoff exists in the current `agy` interface, release remains blocked on an upstream process-scoped configuration mechanism. An empty-list-only implementation must not be described as fully ACP v1 compatible.
+Because startup is lazy, a generation config remains until its `agy` process ends. `AgyProcess` owns a once-only cleanup callback as part of its close barrier: it runs only after process-group and stream-task cleanup, and failure leaves the process unclosed and retained for retry. Agent shutdown closes processes before the manager; unlocked stale owner directories are scavenged later. Residual files are non-sensitive because client specifications are never written there, and the process-scoped environment disappears when its process or host terminates.
+
+Deterministic tests cover success, startup and launcher failure, cancellation, timeout, explicit session close, disconnect, concurrent isolation, process descendants, cleanup retry, and stale leases. Credential-safe `agy 1.2.14` probes additionally verify first-prompt timing and duplicate-name precedence.
 
 ## Cross-platform process policy
 

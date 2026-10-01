@@ -70,21 +70,21 @@ A credential-safe `agy 1.2.14 --conversation` probe resumed a known conversation
 
 Unsupported methods are not registered or advertised. Unsupported input to a supported method returns a protocol error instead of being ignored.
 
-## MCP compatibility gate
+## MCP compatibility
 
-ACP v1 requires every agent to support client-provided stdio MCP servers. HTTP and SSE remain capability-gated.
+ACP v1 requires every agent to support client-provided stdio MCP servers. `agy-acp` accepts strict stdio entries containing `name`, `command`, string `args`, and name/value `env` items. Duplicate server names, duplicate environment names, malformed values, NUL bytes, unknown fields, and HTTP, SSE, or ACP transports return fixed `-32602 Invalid params` errors without payload data.
 
-`agy 1.2.14` has no per-invocation MCP configuration flag. Official Antigravity documentation identifies `.agents/mcp_config.json` as the workspace configuration, and a credential-safe scratch probe confirmed that `agy 1.2.14` starts a stdio server from that file. Persisting an ACP client's server command or environment values into the user's workspace would expose secrets, race concurrent sessions, and mutate repository state.
+`agy 1.2.14` discovers MCP servers from `.agents/mcp_config.json` and starts them lazily after the first user prompt. The adapter provides that configuration without changing the user's workspace or global configuration:
 
-The implementation must therefore prove a process-scoped handoff that:
+1. A lease-owning manager creates a private `0700` owner directory and one random `0700` generation directory per `agy` process.
+2. The generation's `0600` config contains only the current Python interpreter, `agy_acp.mcp_launcher`, and random opaque server slots. Client server names, commands, arguments, and environment values are absent.
+3. Encoded client specifications exist only in namespaced overrides on that `agy` process environment. The trusted launcher reads one slot, removes every internal specification variable, applies only that server's requested environment, and replaces itself with the literal command and arguments through `execvpe()` without a shell.
+4. The private generation directory is appended after client `additionalDirectories`, preserving the requested project as the real process working directory.
+5. Cleanup retains the non-sensitive config through lazy MCP startup and removes it only after the complete `agy` process group and owned stream tasks stop. Failed cleanup remains owned and retryable; a later manager removes unlocked stale owner roots after host or process failure.
 
-- Connects every requested stdio server to the corresponding `agy` session
-- Does not persist client-provided commands, arguments, or environment values in the user's workspace or global configuration
-- Keeps concurrent sessions isolated
-- Restores no shared file and leaves no sensitive crash residue
-- Works on Linux and macOS
+Deterministic tests cover one and many servers, active config timing, random name collision avoidance, project working-directory preservation, concurrent session and environment isolation, launcher failure, initial failure, prompt success/failure/cancellation/timeout, `session/close`, client disconnect, descendant process cleanup, stale-root scavenging, and cleanup retry. Credential-safe live probes separately confirmed lazy startup, two concurrent isolated sessions, and temporary-config precedence for duplicate project server names on `agy 1.2.14`.
 
-The project must not claim complete ACP v1 compatibility until this gate passes. If the current `agy` interface cannot provide a safe handoff, the limitation remains a release blocker rather than being hidden behind an empty-list-only implementation.
+HTTP, SSE, and ACP MCP transports remain unsupported and unadvertised.
 
 ## Prompt content
 
@@ -204,6 +204,7 @@ Central configuration must bound at least:
 - ACP and `agy` line size
 - Retained standard-error bytes
 - Active plus starting sessions
+- MCP server, argument, environment-item, per-spec, total-spec, and process-environment override sizes
 - Initialization timeout
 - Prompt timeout
 - Graceful cancellation time
@@ -229,7 +230,7 @@ Every listed row needs an automated test before the first release.
 | ACP framing | Valid request and notification, malformed JSON, wrong `jsonrpc`, missing or invalid ID/method, embedded newline, oversized record, EOF remainder |
 | Dispatch | Baseline methods, unknown method, notification without response, stable `session/close`, unsupported optional methods |
 | Initialization | Compatible version, incompatible version, truthful capabilities, invalid capability input, init timeout, early exit |
-| MCP | Empty list, one and many stdio servers, invalid command/args/env item, per-session isolation, concurrent sessions, startup failure, HTTP/SSE rejection, no persisted secret values |
+| MCP | Empty list; one and many stdio servers; invalid command/args/env and duplicate names; lazy first-prompt startup; opaque project-name collision avoidance; concurrent environment isolation; cwd and additional-directory order; initial/launcher failure; success/cancel/timeout/close/disconnect cleanup; descendant cleanup; stale lease and cleanup retry; HTTP/SSE/ACP rejection; no persisted secret values |
 | Prompt input | Text, resource link, mixed ordering, empty prompt, unsupported block, invalid paths, strict invalid-list rejection |
 | Streaming | One delta, many deltas, split records, slow consumer, final suffix, no-delta final response, conflicting final response, response barrier |
 | `agy` ordering | Duplicate/late init, update before init, missing/mismatched conversation ID, update outside active turn, duplicate/late result |

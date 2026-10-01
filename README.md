@@ -2,7 +2,7 @@
 
 ## Purpose
 
-`agy-acp` is a security-focused ACP v1 adapter for the Antigravity CLI (`agy`) on Linux and macOS. It supports Python 3.13 and 3.14. Complete ACP v1 compatibility is not yet claimed: client-provided stdio MCP handoff remains blocked by the absence of a safe per-process `agy` configuration interface.
+`agy-acp` is a security-focused ACP v1 adapter for the Antigravity CLI (`agy`) on Linux and macOS. It supports Python 3.13 and 3.14. Complete ACP v1 compatibility is not yet claimed.
 
 ## Installation
 
@@ -22,4 +22,4 @@ Python 3.13 or 3.14 and an installed, authenticated `agy` executable are require
 
 ## Implementation overview
 
-The `agy-acp` console entry point serves bounded NDJSON over stdio, validates ACP requests before dispatch, and launches `agy` without a shell. Sessions use isolated process generations, opaque conversation resumption, ordered text streaming, bounded cancellation, and process-tree cleanup. Verified conditional support includes `session/close` and ordered absolute `additionalDirectories`; `session/load` remains unadvertised until complete ordered history replay is proven, and non-empty `mcpServers` requests fail closed. The adapter adds no telemetry or independent network service; data forwarded to `agy` remains subject to the installed CLI and account configuration.
+The `agy-acp` console entry point serves bounded NDJSON over stdio, validates ACP requests before dispatch, and launches `agy` without a shell. Sessions use isolated process generations, opaque conversation resumption, ordered text streaming, bounded cancellation, process-tree cleanup, and private process-scoped configuration for client-provided stdio MCP servers. Verified conditional support includes `session/close` and ordered absolute `additionalDirectories`; HTTP, SSE, and ACP MCP transports remain unsupported, and `session/load` remains unadvertised until complete ordered history replay is proven. The adapter adds no telemetry or independent network service; data forwarded to `agy` remains subject to the installed CLI and account configuration.
