@@ -153,6 +153,11 @@ def test_unknown_event_discards_name_and_payload() -> None:
             "init": {"cwd": "/x", "permission_mode": "p", "tools": [1]},
         },
         {
+            "event": "init",
+            "conversation_id": "id",
+            "init": {"cwd": "safe\x00tail", "permission_mode": "p", "tools": []},
+        },
+        {
             "event": "step_update",
             "step_update": {
                 "conversation_id": "id",

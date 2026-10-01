@@ -12,6 +12,7 @@ MODE = sys.argv[1]
 MARKER_ROOT = Path(sys.argv[2]) if len(sys.argv) > 2 and Path(sys.argv[2]).is_absolute() else None
 CONVERSATION_ID = f"fake-{Path.cwd().name}" if MODE == "unique" else "fake-session"
 INIT_CONVERSATION_ID = "fake\x00session" if MODE == "nul-conversation" else CONVERSATION_ID
+INIT_CWD = "safe\x00cwd" if MODE == "nul-cwd" else os.getcwd()
 
 
 def emit(payload: dict[str, object]) -> None:
@@ -118,7 +119,7 @@ emit(
         "event": "init",
         "conversation_id": INIT_CONVERSATION_ID,
         "init": {
-            "cwd": os.getcwd(),
+            "cwd": INIT_CWD,
             "permission_mode": "request-review",
             "tools": [],
         },
@@ -138,7 +139,7 @@ if MODE == "duplicate-init":
             "event": "init",
             "conversation_id": INIT_CONVERSATION_ID,
             "init": {
-                "cwd": os.getcwd(),
+                "cwd": INIT_CWD,
                 "permission_mode": "request-review",
                 "tools": [],
             },

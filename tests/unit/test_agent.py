@@ -1205,6 +1205,7 @@ def test_agent_config_rejects_every_invalid_duration_without_echo(
         "malformed-after-init",
         "init-exit-error",
         "init-exit-signal",
+        "nul-cwd",
     ],
 )
 @pytest.mark.asyncio
