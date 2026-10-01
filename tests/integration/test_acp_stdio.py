@@ -111,6 +111,7 @@ async def new_session(process: asyncio.subprocess.Process, cwd: Path) -> str:
     )
     response = await receive(process)
     assert response["id"] == 2
+    assert "result" in response, response
     return str(response["result"]["sessionId"])
 
 
@@ -405,7 +406,7 @@ async def test_stdio_disconnect_terminates_backend_process_group(tmp_path: Path)
     marker_root.mkdir()
     process = await start_server(
         tmp_path,
-        "descendant",
+        "session-descendant",
         marker_root=marker_root,
     )
     await initialize(process)
@@ -424,7 +425,7 @@ async def test_stdio_disconnect_terminates_backend_process_group(tmp_path: Path)
     )
     assert (await receive(process))["method"] == "session/update"
     started = list(marker_root.glob("descendant-started-*"))
-    assert len(started) == 2
+    assert len(started) == 1
 
     assert process.stdin is not None
     process.stdin.close()
