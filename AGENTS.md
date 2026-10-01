@@ -30,9 +30,10 @@ This document applies to all implementation and modification work within the `ag
 ## 4. Implementation and CI Platform
 
 - Use Python for the primary implementation.
-- Support Ubuntu/Linux, macOS, and Windows.
+- Support Ubuntu/Linux and macOS.
+- Do not claim Windows support or add Windows GitHub Actions jobs unless the platform requirements are intentionally revised through a reviewed change.
 - Support the two newest stable Python 3 feature releases (`3.N` and `3.(N-1)`) on every supported operating system.
-- Run GitHub Actions only on standard GitHub-hosted Ubuntu, macOS, and Windows runners.
+- Run GitHub Actions only on standard GitHub-hosted Ubuntu and macOS runners.
 - Standard runners are free for public repositories, but workflows must remain within GitHub's job-duration, concurrency, and storage limits.
 - Do not use larger runners unless the platform requirements are intentionally revised through a reviewed change.
 - Keep dependency installation project-local. Do not require global installation or `sudo` for development and verification.
