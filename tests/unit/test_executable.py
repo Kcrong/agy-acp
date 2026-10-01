@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -28,8 +27,7 @@ def test_relative_path_entries_are_not_searched(
     directory.mkdir()
     candidate = directory / "agy-probe"
     candidate.write_text("probe", encoding="utf-8")
-    if os.name != "nt":
-        candidate.chmod(0o755)
+    candidate.chmod(0o755)
     monkeypatch.chdir(tmp_path)
 
     with pytest.raises(ExecutableResolutionError, match="could not be resolved"):
