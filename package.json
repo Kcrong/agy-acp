@@ -50,9 +50,11 @@
     "test:unit": "vitest run --config vitest.config.ts",
     "test:e2e": "npm run build && vitest run --config vitest.e2e.config.ts",
     "test:package": "npm run build && node scripts/package-smoke.mjs",
+    "test:git-install": "node scripts/package-smoke.mjs --git-install",
     "check:unit": "npm run lint && npm run typecheck && npm run test:unit && npm run build",
     "check": "npm run check:unit && npm run test:e2e",
-    "prepack": "npm run check && node scripts/package-smoke.mjs"
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run check && node scripts/package-smoke.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "1.5.1",
@@ -62,8 +64,8 @@
     "@eslint/js": "10.0.1",
     "@types/node": "22.20.4",
     "eslint": "10.11.0",
-    "typescript": "5.9.3",
+    "typescript": "6.0.3",
     "typescript-eslint": "8.71.0",
-    "vitest": "5.0.2"
+    "vitest": "5.0.3"
   }
 }

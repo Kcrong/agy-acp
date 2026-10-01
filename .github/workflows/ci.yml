@@ -52,3 +52,7 @@ jobs:
       - name: Test packed artifact in a clean install
         if: matrix.node == 24
         run: npm run test:package
+
+      - name: Test Git dependency install
+        if: matrix.node == 24
+        run: npm run test:git-install -- "git+file://${GITHUB_WORKSPACE}#${GITHUB_SHA}"

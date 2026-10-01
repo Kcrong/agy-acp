@@ -43,13 +43,21 @@ The second command verifies server access without exposing token values.
 
 The npm package name is scoped because the unscoped `agy-acp` name belongs to an unrelated project.
 
-After the first public release, install it in your workspace:
+After the first public npm release, install it from the registry:
 
 ```bash
 npm install --save-dev --save-exact @kcrong/agy-acp@0.1.0
 ```
 
-Until publication, build this repository locally:
+Until npm publication, users with repository access can install directly from GitHub:
+
+```bash
+npm install --save-dev 'github:Kcrong/agy-acp#main'
+```
+
+The lockfile records the resolved commit. For a reproducible shared setup, replace `main` with a full commit SHA. Use existing GitHub authentication; never embed a token in the package URL. The Git dependency lifecycle compiles TypeScript before installation.
+
+To work from a source checkout instead:
 
 ```bash
 npm ci --ignore-scripts
@@ -160,6 +168,16 @@ npm run check
 `npm run check` runs lint, strict type checking, unit tests, credential-free fake-process E2E tests, and the build.
 
 `npm run test:package` builds a real tarball, installs it into a new temporary consumer project, verifies package imports and the installed CLI, then removes its scratch directory.
+
+To verify the GitHub dependency path against an accessible revision:
+
+```bash
+npm run test:git-install -- 'github:Kcrong/agy-acp#main'
+```
+
+The smoke test installs into session scratch, verifies the package import and CLI, and does not print Git credentials or resolved authentication data.
+
+See [Technology stack decision](docs/technology-stack.md) for why the adapter remains on Node.js and TypeScript and when a native rewrite should be reconsidered.
 
 The real authenticated smoke test is opt-in:
 

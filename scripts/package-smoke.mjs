@@ -212,10 +212,55 @@ async function main() {
   const workspace = await mkdtemp(join(temporaryBase, "agy-acp-package-"));
 
   try {
-    const packDirectory = join(workspace, "pack");
     const consumerDirectory = join(workspace, "consumer");
-    await mkdir(packDirectory);
     await mkdir(consumerDirectory);
+
+    const gitInstallIndex = process.argv.indexOf("--git-install");
+    if (gitInstallIndex !== -1) {
+      currentStage = "git-spec";
+      const gitInstallSpec = process.argv[gitInstallIndex + 1];
+      if (gitInstallSpec === undefined || gitInstallSpec.startsWith("-")) {
+        throw new Error("Git install spec is required");
+      }
+
+      await writeFile(
+        join(consumerDirectory, "package.json"),
+        JSON.stringify({
+          name: "agy-acp-git-consumer",
+          version: "1.0.0",
+          private: true,
+          type: "module",
+        }),
+      );
+      currentStage = "git-install";
+      await runNpm(
+        [
+          "install",
+          "--no-audit",
+          "--no-fund",
+          "--prefix",
+          consumerDirectory,
+          gitInstallSpec,
+        ],
+        REPOSITORY_ROOT,
+      );
+
+      const packageRoot = join(
+        consumerDirectory,
+        "node_modules",
+        "@kcrong",
+        "agy-acp",
+      );
+      currentStage = "git-import";
+      await verifyImport(consumerDirectory);
+      currentStage = "git-cli";
+      await verifyPackagedCli(consumerDirectory, packageRoot);
+      process.stdout.write("git-install-smoke-ok\n");
+      return;
+    }
+
+    const packDirectory = join(workspace, "pack");
+    await mkdir(packDirectory);
 
     currentStage = "pack";
     const packed = await runNpm(
