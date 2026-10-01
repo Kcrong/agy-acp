@@ -40,7 +40,7 @@ The adapter must follow these invariants:
 | Direction | Method | Adapter responsibility |
 | --- | --- | --- |
 | Client to agent request | `initialize` | Negotiate ACP v1 and advertise only verified capabilities. |
-| Client to agent request | `session/new` | Validate the workspace, connect every requested stdio MCP server, and create an isolated `agy` session. |
+| Client to agent request | `session/new` | Validate the workspace and stdio MCP specifications, register them for lazy first-prompt startup, and create an isolated `agy` session. |
 | Client to agent request | `session/prompt` | Serialize supported content, run one turn, stream updates, and return one terminal stop reason. |
 | Client to agent notification | `session/cancel` | Cancel the active turn and return `cancelled` from the original prompt request. |
 | Agent to client notification | `session/update` | Stream ordered agent text chunks through the SDK connection. |
@@ -77,10 +77,13 @@ ACP v1 requires every agent to support client-provided stdio MCP servers. `agy-a
 `agy 1.2.14` discovers MCP servers from `.agents/mcp_config.json` and starts them lazily after the first user prompt. The adapter provides that configuration without changing the user's workspace or global configuration:
 
 1. A lease-owning manager creates a private `0700` owner directory and one random `0700` generation directory per `agy` process.
-2. The generation's `0600` config contains only the current Python interpreter, `agy_acp.mcp_launcher`, and random opaque server slots. Client server names, commands, arguments, and environment values are absent.
-3. Encoded client specifications exist only in namespaced overrides on that `agy` process environment. The trusted launcher reads one slot, removes every internal specification variable, applies only that server's requested environment, and replaces itself with the literal command and arguments through `execvpe()` without a shell.
-4. The private generation directory is appended after client `additionalDirectories`, preserving the requested project as the real process working directory.
-5. Cleanup retains the non-sensitive config through lazy MCP startup and removes it only after the complete `agy` process group and owned stream tasks stop. Failed cleanup remains owned and retryable; a later manager removes unlocked stale owner roots after host or process failure.
+2. The generation's `0600` config contains only the current Python interpreter, `-I -m agy_acp.mcp_launcher`, and random opaque server slots. Client server names, commands, arguments, and environment values are absent.
+3. Session creation resolves each target to a canonical absolute executable, using only absolute `PATH` entries for a bare command. Encoded client specifications exist only in namespaced overrides on that `agy` process environment.
+4. Python isolated mode prevents workspace `sitecustomize` or `agy_acp` packages from replacing the launcher. The launcher reads one slot, removes every internal specification variable and ambient `PYTHONHOME`/`PYTHONPATH`, applies only that server's requested environment, and replaces itself with the absolute executable and literal arguments through `execve()` without a shell.
+5. The private generation directory is appended after client `additionalDirectories`, preserving the requested project as the real process working directory.
+6. Cleanup retains the non-sensitive config through lazy MCP startup and removes it only after the complete `agy` process group and owned stream tasks stop. Failed cleanup remains owned and retryable; a later manager removes validated, unlocked stale owner roots.
+
+The installed `agy` process is an explicit trusted boundary. The current upstream interface requires it to receive the process-scoped encoded specifications that its generated launchers consume, so the adapter does not claim to protect MCP commands or credentials from a compromised `agy` process or arbitrary children launched directly by it. The launcher prevents those internal values from reaching the final MCP target or sibling launchers.
 
 Deterministic tests cover one and many servers, active config timing, random name collision avoidance, project working-directory preservation, concurrent session and environment isolation, launcher failure, initial failure, prompt success/failure/cancellation/timeout, `session/close`, client disconnect, descendant process cleanup, stale-root scavenging, and cleanup retry. Credential-safe live probes separately confirmed lazy startup, two concurrent isolated sessions, and temporary-config precedence for duplicate project server names on `agy 1.2.14`.
 
@@ -160,7 +163,8 @@ Known events are accepted only in the session phase where they are valid.
 - Different sessions may run concurrently.
 - Active and starting sessions count against one bounded admission limit.
 - An idle process may exit; the next prompt may restart it once with the opaque conversation identifier.
-- Closing a session or the ACP connection performs bounded process-tree cleanup.
+- Closing a session or the ACP connection performs bounded cleanup of the `agy` process group.
+- MCP servers must remain in the inherited process group; daemonizing or detached descendants are unsupported and outside the lifecycle guarantee.
 - A closed or unknown session returns a stable session error.
 
 ### Cancellation and timeout
@@ -170,7 +174,7 @@ Cancellation is a terminal race with exactly one winner.
 1. Mark the prompt as cancelling.
 2. Signal the complete process group on Linux and macOS.
 3. Wait for a structured result or exit during a bounded grace period.
-4. Escalate to a hard process-tree termination if needed.
+4. Escalate to a hard process-group termination if needed.
 5. Await a bounded cleanup barrier.
 6. Complete the original ACP prompt with `cancelled`.
 

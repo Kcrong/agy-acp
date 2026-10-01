@@ -111,7 +111,7 @@ bounded NDJSON parser and ordered event consumer
 - `AgyAgent` maps validated ACP methods and never owns subprocess details.
 - `SessionManager` owns admission, session identity, prompt serialization, restart, close, and disconnect cleanup.
 - `McpHandoff` owns per-session stdio MCP validation, process-scoped configuration, and cleanup.
-- `AgyProcess` owns one child process, stream tasks, timers, and process-tree termination.
+- `AgyProcess` owns one child process, stream tasks, timers, and process-group termination.
 - The NDJSON parser has no process or protocol side effects.
 - Configuration is validated once before the agent begins reading ACP stdin.
 
@@ -129,10 +129,12 @@ ACP client stdio MCP entries are parsed into immutable bounded specifications. H
 
 A process-scoped generation has two channels:
 
-- A `0600` `.agents/mcp_config.json` contains collision-resistant opaque server keys and invokes the installed interpreter with `-m agy_acp.mcp_launcher <slot>`. It contains no client server name, target command, arguments, environment name, or environment value.
-- Namespaced environment overrides on that `agy` process contain the encoded bounded specifications. The launcher selects one slot, removes every internal specification variable, applies only its target environment, and executes the target directly without a shell.
+- A `0600` `.agents/mcp_config.json` contains collision-resistant opaque server keys and invokes the installed interpreter with `-I -m agy_acp.mcp_launcher <slot>`. It contains no client server name, target command, arguments, environment name, or environment value.
+- Namespaced environment overrides on that `agy` process contain the encoded bounded specifications. Session creation resolves targets to canonical absolute executables through absolute `PATH` entries. Python isolated mode prevents workspace import hooks from replacing the launcher; it removes every internal specification variable and ambient `PYTHONHOME`/`PYTHONPATH`, applies only its target environment, and calls `execve()` without a shell.
 
-The lease-owning manager creates its owner and generation directories with mode `0700`. Client additional directories retain their order and the private config root is appended last, while `agy` continues to run in the requested project working directory. Random generation roots, config keys, and slots isolate concurrent processes and avoid collisions with project MCP names.
+The lease-owning manager canonicalizes its temp parent and accepts only trusted-owner private or sticky directories, then creates owner and generation directories with mode `0700`. Stale scavenging opens directories and leases without following links, rejects nonregular or incorrectly owned/mode leases, locks nonblocking, and revalidates the directory inode before removal. Client additional directories retain their order and the private config root is appended last, while `agy` continues to run in the requested project working directory. Random generation roots, config keys, and slots isolate concurrent processes and avoid collisions with project MCP names.
+
+The installed `agy` backend is an explicit trusted boundary. Its current config-launch interface requires the process to receive the encoded specifications, so a compromised backend or arbitrary child it launches directly can inspect them. The launcher prevents internal specifications from reaching final MCP targets or sibling launchers; protection from the trusted backend itself is not claimed.
 
 Because startup is lazy, a generation config remains until its `agy` process ends. `AgyProcess` owns a once-only cleanup callback as part of its close barrier: it runs only after process-group and stream-task cleanup, and failure leaves the process unclosed and retained for retry. Agent shutdown closes processes before the manager; unlocked stale owner directories are scavenged later. Residual files are non-sensitive because client specifications are never written there, and the process-scoped environment disappears when its process or host terminates.
 
@@ -145,9 +147,10 @@ Deterministic tests cover success, startup and launcher failure, cancellation, t
 - Persistent `agy` processes run without print-mode or child timeout flags; `AgyProcess` owns all deadlines.
 - Graceful termination is attempted first.
 - Hard termination is bounded and awaited before a lifecycle is considered closed.
-- Platform-specific behavior is isolated behind one process-control interface and tested with fake descendant processes.
+- Platform-specific behavior is isolated behind one process-control interface and tested with fake descendants that remain in the inherited group.
+- MCP servers that daemonize, call `setsid()`, or otherwise leave the inherited process group are unsupported and outside the cleanup guarantee.
 
-No platform is advertised unless its hosted matrix and process-tree tests pass.
+No platform is advertised unless its hosted matrix and process-group tests pass.
 
 ## CI policy
 
