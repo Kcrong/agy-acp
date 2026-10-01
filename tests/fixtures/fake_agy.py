@@ -81,7 +81,15 @@ if MODE in {"descendant", "idle-exit-descendant"}:
         f"Path({str(started)!r}).write_text('started', encoding='utf-8'); "
         f"time.sleep(1.2); Path({str(survived)!r}).write_text('alive', encoding='utf-8')"
     )
-    subprocess.Popen([sys.executable, "-c", code])
+    if MODE == "idle-exit-descendant":
+        subprocess.Popen([sys.executable, "-c", code])
+    else:
+        subprocess.Popen(
+            [sys.executable, "-c", code],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     deadline = time.monotonic() + 2
     while not started.exists() and time.monotonic() < deadline:
         time.sleep(0.01)
