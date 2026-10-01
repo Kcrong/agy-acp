@@ -70,7 +70,7 @@ def _mapping(value: object) -> Mapping[str, object]:
 
 def _required_string(values: Mapping[str, object], key: str) -> str:
     value = values.get(key)
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value or "\x00" in value:
         raise _EventShapeError
     return value
 
