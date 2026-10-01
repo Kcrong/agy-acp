@@ -18,9 +18,13 @@ from acp import (
 from acp.helpers import update_agent_message
 from acp.schema import (
     AgentCapabilities,
+    CloseSessionResponse,
     Implementation,
     PromptCapabilities,
     ResourceContentBlock,
+    SessionAdditionalDirectoriesCapabilities,
+    SessionCapabilities,
+    SessionCloseCapabilities,
     TextContentBlock,
 )
 from pydantic import ValidationError
@@ -79,6 +83,11 @@ class _Session:
     cancel_cleanup: asyncio.Task[None] | None = None
     cancel_process: AgyProcess | None = None
     unusable: bool = False
+    closed: bool = False
+    prompt_done: asyncio.Event = field(default_factory=asyncio.Event)
+
+    def __post_init__(self) -> None:
+        self.prompt_done.set()
 
 
 def _invalid_params() -> AcpRequestError:
@@ -130,6 +139,20 @@ def _validate_optional_string(values: Mapping[str, object], key: str) -> None:
     value = values.get(key)
     if value is not None and not isinstance(value, str):
         raise _invalid_params()
+
+
+def _parse_additional_directories(values: list[str] | None) -> tuple[Path, ...]:
+    if values is None:
+        return ()
+    directories: list[Path] = []
+    for value in values:
+        if not isinstance(value, str) or not value or "\x00" in value:
+            raise _invalid_params()
+        directory = Path(value)
+        if not directory.is_absolute():
+            raise _invalid_params()
+        directories.append(directory)
+    return tuple(directories)
 
 
 def serialize_prompt(blocks: Sequence[Mapping[str, object]]) -> str:
@@ -199,6 +222,10 @@ class AgyAgent:
             protocol_version=PROTOCOL_VERSION,
             agent_capabilities=AgentCapabilities(
                 prompt_capabilities=PromptCapabilities(),
+                session_capabilities=SessionCapabilities(
+                    close=SessionCloseCapabilities(),
+                    additional_directories=SessionAdditionalDirectoriesCapabilities(),
+                ),
             ),
             agent_info=Implementation(name="agy-acp", version=__version__),
         )
@@ -210,14 +237,16 @@ class AgyAgent:
         mcp_servers: list[object],
         additional_directories: list[str] | None = None,
     ) -> NewSessionResponse:
-        if mcp_servers or additional_directories:
+        if mcp_servers:
             raise _invalid_params()
+        additional_paths = _parse_additional_directories(additional_directories)
         workspace = Path(cwd)
         if not workspace.is_absolute() or not workspace.is_dir():
             raise _invalid_params()
         process_config = AgyProcessConfig(
             command=self._config.command,
             cwd=workspace,
+            additional_directories=additional_paths,
             max_line_bytes=self._config.max_line_bytes,
             max_stderr_bytes=self._config.max_stderr_bytes,
             max_pending_events=self._config.max_pending_events,
@@ -408,7 +437,7 @@ class AgyAgent:
         prompt: list[Mapping[str, object]],
     ) -> PromptResponse:
         session = self._sessions.get(session_id)
-        if session is None or session.unusable:
+        if session is None or session.unusable or session.closed:
             raise AcpRequestError(-32015, "Session not found")
         if session.active_prompt is not None:
             raise AcpRequestError(-32013, "Session busy")
@@ -417,6 +446,7 @@ class AgyAgent:
         if current is None:
             raise AcpRequestError(-32603, "Internal error")
         session.active_prompt = current
+        session.prompt_done.clear()
         session.cancel_requested = False
         session.cancel_event.clear()
         message_id = uuid4().hex
@@ -523,6 +553,7 @@ class AgyAgent:
             raise AcpRequestError(-32603, "Internal error") from None
         finally:
             session.active_prompt = None
+            session.prompt_done.set()
 
     async def _receive_or_cancel(
         self,
@@ -639,6 +670,62 @@ class AgyAgent:
         update.message_id = message_id
         payload = update.model_dump(mode="json", by_alias=True, exclude_none=True)
         await self._send_update(session_id, payload)
+
+    async def _wait_for_close_parts(
+        self,
+        session: _Session,
+        cleanup: asyncio.Task[None] | None,
+        wait_for_prompt: bool,
+    ) -> None:
+        if cleanup is not None:
+            await cleanup
+        if wait_for_prompt:
+            await session.prompt_done.wait()
+
+    async def close_session(self, session_id: str) -> CloseSessionResponse:
+        async with self._admission_lock:
+            session = self._sessions.get(session_id)
+            if session is None or session.closed or session.unusable:
+                raise AcpRequestError(-32015, "Session not found")
+            session.closed = True
+        active_prompt = session.active_prompt
+        if active_prompt is not None:
+            session.cancel_requested = True
+        cleanup = self._start_cancel_cleanup(session)
+        session.cancel_event.set()
+        if (
+            cleanup is None
+            and active_prompt is not None
+            and active_prompt is not asyncio.current_task()
+        ):
+            active_prompt.cancel()
+        barrier = asyncio.create_task(
+            self._wait_for_close_parts(
+                session,
+                cleanup,
+                active_prompt is not None,
+            ),
+            name="agy-acp.session-close",
+        )
+        cancelled = False
+        try:
+            while True:
+                try:
+                    await asyncio.shield(barrier)
+                    break
+                except asyncio.CancelledError:
+                    cancelled = True
+        except BackendProcessError:
+            process = session.cancel_process
+            if process is not None:
+                await self._mark_unusable(session_id, session, process)
+            raise _backend_unavailable() from None
+        session.cancel_cleanup = None
+        session.cancel_process = None
+        await self._retire_session(session_id, session)
+        if cancelled:
+            raise asyncio.CancelledError
+        return CloseSessionResponse()
 
     async def cancel(self, session_id: str) -> None:
         session = self._sessions.get(session_id)

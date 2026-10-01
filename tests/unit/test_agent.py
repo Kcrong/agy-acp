@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -22,11 +23,15 @@ def agent_config(
     prompt_timeout: float = 2,
     init_timeout: float = 2,
     max_sessions: int = 16,
+    marker_root: Path | None = None,
 ) -> AgentConfig:
+    prefix_args: tuple[str, ...] = ("-u", str(FIXTURE), mode)
+    if marker_root is not None:
+        prefix_args += (str(marker_root),)
     return AgentConfig(
         command=AgyCommand(
             Path(sys.executable).resolve(),
-            ("-u", str(FIXTURE), mode),
+            prefix_args,
         ),
         max_line_bytes=4096,
         max_stderr_bytes=64,
@@ -96,7 +101,10 @@ async def test_initialize_advertises_only_baseline_capabilities(tmp_path: Path) 
             "embeddedContext": False,
         },
         "mcpCapabilities": {"http": False, "sse": False, "acp": False},
-        "sessionCapabilities": {},
+        "sessionCapabilities": {
+            "additionalDirectories": {},
+            "close": {},
+        },
         "auth": {},
     }
 
@@ -720,5 +728,201 @@ async def test_backend_operation_cleanup_failure_quarantines_session(
                 session_id=session.session_id,
                 prompt=[{"type": "text", "text": "second"}],
             )
+
+    await agent.close()
+
+
+@pytest.mark.parametrize(
+    "directories",
+    [["relative"], [""], ["/safe\x00tail"]],
+)
+@pytest.mark.asyncio
+async def test_additional_directories_require_absolute_safe_paths(
+    tmp_path: Path,
+    directories: list[str],
+) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    agent = AgyAgent(agent_config(tmp_path, "normal"), send_update)
+    with pytest.raises(AcpRequestError, match="Invalid params"):
+        await agent.new_session(
+            cwd=str(tmp_path),
+            mcp_servers=[],
+            additional_directories=directories,
+        )
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_additional_directories_preserve_order_across_generations(
+    tmp_path: Path,
+) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    marker_root = tmp_path / "markers"
+    marker_root.mkdir()
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    expected = [str(first), str(second), str(first)]
+    agent = AgyAgent(
+        agent_config(tmp_path, "record-args", marker_root=marker_root),
+        send_update,
+    )
+    session = await agent.new_session(
+        cwd=str(tmp_path),
+        mcp_servers=[],
+        additional_directories=expected,
+    )
+    assert (
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    ).stop_reason == "end_turn"
+
+    records = [
+        json.loads(line)
+        for line in (marker_root / "argv.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert records == [expected, expected]
+    await agent.close_session(session.session_id)
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_close_idle_session_releases_capacity_and_is_idempotent_error(
+    tmp_path: Path,
+) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    agent = AgyAgent(
+        agent_config(tmp_path, "normal", max_sessions=1),
+        send_update,
+    )
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    response = await agent.close_session(session.session_id)
+    assert response.model_dump(mode="json", by_alias=True, exclude_none=True) == {}
+    with pytest.raises(AcpRequestError, match="Session not found"):
+        await agent.close_session(session.session_id)
+    with pytest.raises(AcpRequestError, match="Session not found"):
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "closed"}],
+        )
+    replacement = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    await agent.close_session(replacement.session_id)
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_close_active_session_cancels_prompt_before_returning(
+    tmp_path: Path,
+) -> None:
+    update_arrived = asyncio.Event()
+
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        update_arrived.set()
+
+    agent = AgyAgent(agent_config(tmp_path, "hang"), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    prompting = asyncio.create_task(
+        agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    )
+    async with asyncio.timeout(2):
+        await update_arrived.wait()
+
+    closed = await agent.close_session(session.session_id)
+    assert closed.model_dump(mode="json", by_alias=True, exclude_none=True) == {}
+    assert (await prompting).stop_reason == "cancelled"
+    with pytest.raises(AcpRequestError, match="Session not found"):
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "closed"}],
+        )
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_sessions_keep_unique_process_generations(
+    tmp_path: Path,
+) -> None:
+    updates: list[str] = []
+
+    async def send_update(session_id: str, _update: dict[str, object]) -> None:
+        updates.append(session_id)
+
+    first_cwd = tmp_path / "one"
+    second_cwd = tmp_path / "two"
+    first_cwd.mkdir()
+    second_cwd.mkdir()
+    agent = AgyAgent(
+        agent_config(tmp_path, "unique", max_sessions=2),
+        send_update,
+    )
+    first, second = await asyncio.gather(
+        agent.new_session(cwd=str(first_cwd), mcp_servers=[]),
+        agent.new_session(cwd=str(second_cwd), mcp_servers=[]),
+    )
+    assert first.session_id != second.session_id
+
+    responses = await asyncio.gather(
+        agent.prompt(
+            session_id=first.session_id,
+            prompt=[{"type": "text", "text": "first"}],
+        ),
+        agent.prompt(
+            session_id=second.session_id,
+            prompt=[{"type": "text", "text": "second"}],
+        ),
+    )
+    assert [response.stop_reason for response in responses] == ["end_turn", "end_turn"]
+    assert set(updates) == {first.session_id, second.session_id}
+    await asyncio.gather(
+        agent.close_session(first.session_id),
+        agent.close_session(second.session_id),
+    )
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_close_cleanup_failure_quarantines_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    update_arrived = asyncio.Event()
+
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        update_arrived.set()
+
+    agent = AgyAgent(agent_config(tmp_path, "hang"), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    prompting = asyncio.create_task(
+        agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "hello"}],
+        )
+    )
+    async with asyncio.timeout(2):
+        await update_arrived.wait()
+
+    async def fail_cancel(_process: AgyProcess) -> None:
+        raise BackendShutdownError
+
+    with monkeypatch.context() as patch:
+        patch.setattr(AgyProcess, "cancel", fail_cancel)
+        with pytest.raises(AcpRequestError, match="Backend unavailable"):
+            await agent.close_session(session.session_id)
+        with pytest.raises(AcpRequestError, match="Backend unavailable"):
+            await prompting
+        with pytest.raises(AcpRequestError, match="Session not found"):
+            await agent.close_session(session.session_id)
 
     await agent.close()

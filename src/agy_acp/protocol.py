@@ -232,7 +232,7 @@ class AcpStdioServer:
         method: str,
         message: Mapping[str, object],
     ) -> BaseModel:
-        if method not in {"initialize", "session/new", "session/prompt"}:
+        if method not in {"initialize", "session/new", "session/prompt", "session/close"}:
             raise AcpRequestError(-32601, "Method not found")
         params = _params(message)
         if method == "initialize":
@@ -261,6 +261,9 @@ class AcpStdioServer:
             return result
         if not self._initialized:
             raise _invalid_request()
+        if method == "session/close":
+            _validate_params(params, {"sessionId", "_meta"})
+            return await self._agent.close_session(_required_string(params, "sessionId"))
         if method == "session/new":
             _validate_params(
                 params,

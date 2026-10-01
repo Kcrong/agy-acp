@@ -92,7 +92,10 @@ async def test_completed_result_wins_cancellation_during_blocked_output() -> Non
                         "embeddedContext": False,
                     },
                     "mcpCapabilities": {"http": False, "sse": False, "acp": False},
-                    "sessionCapabilities": {},
+                    "sessionCapabilities": {
+                        "additionalDirectories": {},
+                        "close": {},
+                    },
                     "auth": {},
                 },
                 "authMethods": [],
