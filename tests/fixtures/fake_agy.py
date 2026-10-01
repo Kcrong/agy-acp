@@ -65,13 +65,15 @@ if MODE == "restart-slow-init" and "--conversation" in sys.argv[2:]:
         (MARKER_ROOT / "restart-started").write_text("started", encoding="utf-8")
     time.sleep(30)
 
-if MODE in {"ignore-term", "descendant", "idle-exit-descendant"}:
+if MODE in {"ignore-term", "descendant", "idle-exit-descendant", "session-descendant"}:
     signal.signal(signal.SIGTERM, ignore_signal)
 
 if MODE == "stderr":
     os.write(sys.stderr.fileno(), b"x" * 4096)
 
-if MODE in {"descendant", "idle-exit-descendant"}:
+if MODE in {"descendant", "idle-exit-descendant", "session-descendant"} and (
+    MODE != "session-descendant" or "--conversation" in sys.argv[2:]
+):
     if MARKER_ROOT is None:
         raise SystemExit(9)
     started = MARKER_ROOT / f"descendant-started-{os.getpid()}"
@@ -218,7 +220,7 @@ for line in sys.stdin:
             },
         }
     )
-    if MODE in {"hang", "ignore-term", "descendant"}:
+    if MODE in {"hang", "ignore-term", "descendant", "session-descendant"}:
         time.sleep(30)
         continue
     if MODE == "conflict":
