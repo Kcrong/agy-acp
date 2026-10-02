@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from agy_acp import __version__
 from agy_acp.cli import build_parser, main
 
 
@@ -13,7 +14,7 @@ def test_version_flag_reports_package_version(
 
     assert raised.value.code == 0
     captured = capsys.readouterr()
-    assert captured.out == "agy-acp 0.1.0\n"
+    assert captured.out == f"agy-acp {__version__}\n"
     assert captured.err == ""
 
 

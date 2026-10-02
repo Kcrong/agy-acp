@@ -26,7 +26,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     env:
-      UV_FROZEN: "1"
       UV_PYTHON: ${{ matrix.python-version }}
     strategy:
       fail-fast: false
@@ -74,8 +73,29 @@ jobs:
       - name: Test
         run: uv run --frozen pytest
 
+      - name: Run pinned experimental ACP TCK
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14' }}
+        run: >-
+          uv run --frozen --group tck python scripts/tck_smoke.py
+          --report-json "$RUNNER_TEMP/acp-tck-report.json"
+
+      - name: Upload ACP TCK report
+        if: ${{ always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: acp-tck-report
+          path: ${{ runner.temp }}/acp-tck-report.json
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Build distributions
-        run: uv build --no-build-isolation
+        run: uv build --no-build-isolation --out-dir "$RUNNER_TEMP/dist"
+
+      - name: Check distribution metadata
+        run: uv run --frozen twine check --strict "$RUNNER_TEMP"/dist/*
+
+      - name: Verify distribution archives and installation
+        run: uv run --frozen python scripts/package_smoke.py "$RUNNER_TEMP/dist"
 
       - name: Verify exact Git installation
         run: >-

@@ -7,6 +7,7 @@ from typing import cast
 
 import pytest
 
+from agy_acp import __version__
 from agy_acp.agent import AgentConfig, AgyAgent
 from agy_acp.executable import AgyCommand
 from agy_acp.protocol import AcpStdioServer
@@ -91,15 +92,16 @@ async def test_completed_result_wins_cancellation_during_blocked_output() -> Non
                         "audio": False,
                         "embeddedContext": False,
                     },
-                    "mcpCapabilities": {"http": False, "sse": False, "acp": False},
+                    "mcpCapabilities": {"http": False, "sse": False},
                     "sessionCapabilities": {
                         "additionalDirectories": {},
+                        "resume": {},
                         "close": {},
                     },
                     "auth": {},
                 },
                 "authMethods": [],
-                "agentInfo": {"name": "agy-acp", "version": "0.1.0"},
+                "agentInfo": {"name": "agy-acp", "version": __version__},
             },
         }
     ]

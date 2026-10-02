@@ -82,6 +82,56 @@ def _strict_string_list(value: object) -> list[str] | None:
     return value
 
 
+def _validate_initialize_info(value: object) -> None:
+    if not isinstance(value, Mapping):
+        raise _invalid_params()
+    _validate_params(value, {"name", "version", "title", "_meta"})
+    for key in ("name", "version"):
+        _required_string(value, key)
+    title = value.get("title")
+    if title is not None and (not isinstance(title, str) or not title or "\x00" in title):
+        raise _invalid_params()
+
+
+def _parse_initialize(params: Mapping[str, object]) -> InitializeRequest | int:
+    if "capabilities" in params:
+        _validate_params(params, {"protocolVersion", "capabilities", "info", "_meta"})
+        requested_version = params.get("protocolVersion")
+        if (
+            type(requested_version) is not int
+            or requested_version == PROTOCOL_VERSION
+            or not 0 <= requested_version <= 65535
+            or not isinstance(params.get("capabilities"), Mapping)
+        ):
+            raise _invalid_params()
+        _validate_initialize_info(params.get("info"))
+        return requested_version
+
+    _validate_params(
+        params,
+        {"protocolVersion", "clientCapabilities", "clientInfo", "info", "_meta"},
+    )
+    validated_params = dict(params)
+    if "info" in params:
+        if params.get("protocolVersion") == PROTOCOL_VERSION:
+            raise _invalid_params()
+        _validate_initialize_info(params.get("info"))
+        validated_params.pop("info")
+    try:
+        request = InitializeRequest.model_validate(validated_params)
+        normalized = request.model_dump(
+            mode="json",
+            by_alias=True,
+            exclude_unset=True,
+            warnings=False,
+        )
+    except ValidationError:
+        raise _invalid_params() from None
+    if not _same_json_shape(validated_params, normalized):
+        raise _invalid_params()
+    return request
+
+
 class AcpStdioServer:
     def __init__(
         self,
@@ -273,31 +323,23 @@ class AcpStdioServer:
         method: str,
         message: Mapping[str, object],
     ) -> BaseModel:
-        if method not in {"initialize", "session/new", "session/prompt", "session/close"}:
+        if method not in {
+            "initialize",
+            "session/new",
+            "session/resume",
+            "session/prompt",
+            "session/close",
+        }:
             raise AcpRequestError(-32601, "Method not found")
         params = _params(message)
         if method == "initialize":
-            _validate_params(
-                params,
-                {"protocolVersion", "clientCapabilities", "clientInfo", "_meta"},
-            )
             if self._initialized:
                 raise _invalid_request()
-            try:
-                request = InitializeRequest.model_validate(params)
-                normalized = request.model_dump(
-                    mode="json",
-                    by_alias=True,
-                    exclude_unset=True,
-                    warnings=False,
-                )
-            except ValidationError:
-                raise _invalid_params() from None
-            if not _same_json_shape(dict(params), normalized):
-                raise _invalid_params()
-            if request.protocol_version < PROTOCOL_VERSION:
-                raise _invalid_params()
-            result = await self._agent.initialize(protocol_version=request.protocol_version)
+            request = _parse_initialize(params)
+            protocol_version = (
+                request.protocol_version if isinstance(request, InitializeRequest) else request
+            )
+            result = await self._agent.initialize(protocol_version=protocol_version)
             self._initialized = True
             return result
         if not self._initialized:
@@ -319,6 +361,24 @@ class AcpStdioServer:
                 cwd=cwd,
                 mcp_servers=list(mcp_servers),
                 additional_directories=additional,
+            )
+        if method == "session/resume":
+            _validate_params(
+                params,
+                {"sessionId", "cwd", "mcpServers", "additionalDirectories", "_meta"},
+            )
+            mcp_servers_value = params.get("mcpServers")
+            if mcp_servers_value is None:
+                resume_mcp_servers: list[object] = []
+            elif isinstance(mcp_servers_value, list):
+                resume_mcp_servers = list(mcp_servers_value)
+            else:
+                raise _invalid_params()
+            return await self._agent.resume_session(
+                session_id=_required_string(params, "sessionId"),
+                cwd=_required_string(params, "cwd"),
+                mcp_servers=resume_mcp_servers,
+                additional_directories=_strict_string_list(params.get("additionalDirectories")),
             )
         _validate_params(params, {"sessionId", "prompt", "_meta"})
         session_id = _required_string(params, "sessionId")

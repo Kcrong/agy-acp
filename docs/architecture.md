@@ -21,6 +21,7 @@ The implementation is a protocol and subprocess adapter. It does not implement a
 | Lint and format | Ruff `0.16.9` | One stable tool for formatting, import order, and lint rules. |
 | Static typing | mypy `2.3.1` in strict mode | Stable Python-native checker; verified against the ACP SDK surface on Python 3.13 and 3.14. |
 | Tests | pytest `9.1.1`, pytest-asyncio `1.4.0`, pytest-timeout `2.4.0` | Stable async test stack with hard test deadlines. |
+| ACP TCK | `0.2.0` at commit `9b4334813bc4a3583285592027cc2f3ab85793bd`, Python 3.14 only | Official experimental supplementary compatibility evidence; not a runtime dependency or certification. |
 
 A universal scratch lock resolved these versions together. Separate Python 3.13 and 3.14 environments imported the SDK and passed Ruff, strict mypy, and bytecode compilation of a minimal `Agent` implementation.
 
@@ -38,7 +39,8 @@ A project-owned `AcpStdioServer` therefore:
 - Validates the JSON-RPC envelope and raw method parameters before constructing SDK models
 - Rejects invalid list items instead of silently dropping them
 - Tracks request IDs and implements `$/cancel_request`
-- Dispatches stable `session/close` without enabling unrelated unstable routes
+- Dispatches stable `session/close` and `session/resume` without enabling unrelated unstable routes
+- Negotiates unsupported lower or higher protocol versions to the latest supported stable version while strictly distinguishing canonical v1 and v2-shaped initialization fields
 - Serializes successful SDK models with protocol aliases
 - Maps all failures to fixed, redacted JSON-RPC errors
 - Ensures stdout contains no non-protocol output
@@ -117,11 +119,11 @@ bounded NDJSON parser and ordered event consumer
 
 Every task, stream, timer, and process has one explicit owner and one bounded cleanup path.
 
-## Session load history gate
+## Session resume and load history gate
 
-`agy --conversation` preserves opaque conversation identity for later prompts. A credential-safe `agy 1.2.14` resume probe sent EOF without a new prompt and observed only the structural `init` event: no history `step_update` or `result` events were emitted. This tested path does not establish the complete prior transcript replay required by ACP `session/load`.
+`agy --conversation` preserves opaque conversation identity for later prompts. The adapter uses that supported behavior for `session/resume`: a fresh adapter validates the requested identity and working directory through a bounded `agy` initialization, while an existing idle session is atomically reconfigured with the request's complete additional-directory and stdio MCP lists. Resume returns no prior-message updates.
 
-Identity resumption is therefore used only for internal process-generation continuity. `session/load` remains unregistered and its capability remains false until an upstream interface supplies complete ordered history without exposing raw conversation data through logs or persistent adapter state.
+A credential-safe `agy 1.2.14` resume probe sent EOF without a new prompt and observed only the structural `init` event: no history `step_update` or `result` events were emitted. This does not establish the complete prior transcript replay required by ACP `session/load`. `session/load` therefore remains unregistered and its capability remains false until a supported upstream interface supplies every historical user and agent message with exact content, ordering, boundaries, and a replay-complete signal.
 
 ## Stdio MCP handoff
 
@@ -170,17 +172,24 @@ Selected Actions:
 | `actions/checkout` | `v7.0.1` | `3d3c42e5aac5ba805825da76410c181273ba90b1` | Node 24 |
 | `actions/setup-python` | `v7.0.0` | `5fda3b95a4ea91299a34e894583c3862153e4b97` | Node 24 |
 | `astral-sh/setup-uv` | `v10.2.0` | `c18668ad3cf93ea998bef934396af7bb5c839dc7` | Node 24 |
+| `actions/upload-artifact` | `v7.0.1` | `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` | Node 24 |
+| `actions/download-artifact` | `v8.0.1` | `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c` | Node 24 |
+| `pypa/gh-action-pypi-publish` | `v1.14.2` | `dc37677b2e1c63e2034f94d8a5b11f265b73ba33` | Composite/container |
 
-The workflow pins uv `0.12.21`, installs from `uv.lock` with frozen resolution, grants read-only repository permissions, and exposes no repository secrets to pull-request code.
+The workflow pins uv `0.12.21`, installs from `uv.lock` with frozen resolution, grants read-only repository permissions, and exposes no repository secrets to pull-request code. The Ubuntu/Python 3.14 cell also runs the pinned experimental ACP TCK and retains its JSON report. Every cell builds distributions, runs Twine strict metadata checks, validates exact wheel/sdist manifests, and installs the wheel in a clean environment.
+
+A separate manual `publish.yml` workflow validates an existing annotated `vX.Y.Z` tag on `main`, repeats the four supported test cells, builds and validates one immutable artifact, and transfers that exact artifact to a protected `pypi` environment. That environment must allow deployments only from `main`, prevent self-review, and require an independent reviewer. Only the final publish job receives `id-token: write`; it uses PyPI Trusted Publishing and no password or repository secret. Human environment approval remains required before the irreversible upload.
 
 ## Validation layers
 
 1. Unit tests cover pure parsing, validation, mapping, and state transitions.
 2. Fake-process integration tests cover stream and subprocess behavior deterministically.
 3. ACP client-to-agent end-to-end tests cover JSON-RPC framing and lifecycle behavior.
-4. An opt-in real `agy` smoke test records only structural metadata and a fixed-response hash.
-5. Clean Git installation tests validate import and the console entry point in an isolated consumer.
-6. Hosted CI runs every supported operating-system and Python-version combination.
+4. A pinned official experimental ACP TCK verifies every mandatory and advertised capability requirement it covers and retains a machine-readable report.
+5. An opt-in real `agy` smoke test records only structural metadata and a fixed-response hash.
+6. Clean Git installation tests validate import and the console entry point in an isolated consumer.
+7. Exact wheel/sdist manifest, metadata, Twine, and clean-wheel-install tests validate release artifacts.
+8. Hosted CI runs every supported operating-system and Python-version combination.
 
 ## Rejected alternatives
 
