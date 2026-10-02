@@ -73,6 +73,16 @@ jobs:
       - name: Test
         run: uv run --frozen pytest
 
+      - name: Stress Darwin MCP cleanup
+        if: ${{ matrix.os == 'macos-latest' && matrix.python-version == '3.13' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for iteration in {1..20}; do
+            uv run --frozen pytest -q \
+              tests/integration/test_mcp_handoff.py::test_multiple_mcp_servers_and_concurrent_sessions_are_isolated
+          done
+
       - name: Run pinned experimental ACP TCK
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14' }}
         run: >-

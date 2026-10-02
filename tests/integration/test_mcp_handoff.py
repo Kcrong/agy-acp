@@ -265,6 +265,10 @@ async def test_multiple_mcp_servers_and_concurrent_sessions_are_isolated(
     )
 
     assert [response.stop_reason for response in responses] == ["end_turn", "end_turn"]
+    reaped = sorted(
+        int(path.read_text(encoding="utf-8")) for path in marker_root.glob("mcp-reaped-*")
+    )
+    assert reaped == [1, 2]
     for marker in (*first_markers, second_marker):
         assert read_marker(marker) == {
             "expected_env": True,

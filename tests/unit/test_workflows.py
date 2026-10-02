@@ -50,6 +50,11 @@ def test_ci_workflow_is_ready_pr_only_and_sha_pinned() -> None:
     raw = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text()
     assert "UV_FROZEN" not in raw
     assert "run: uv lock --check" in raw
+    assert "Stress Darwin MCP cleanup" in raw
+    assert (
+        "tests/integration/test_mcp_handoff.py::test_multiple_mcp_servers_and_concurrent_sessions_are_isolated"
+        in raw
+    )
     assert "windows" not in str(workflow).lower()
 
 
@@ -89,6 +94,7 @@ def test_publish_workflow_is_manual_validated_and_sha_pinned() -> None:
     assert "user:" not in raw
     assert "UV_FROZEN" not in raw
     assert raw.count("run: uv lock --check") == 2
+    assert "Stress Darwin MCP cleanup" in raw
     assert "ref: refs/tags/${{ inputs.release_tag }}" in raw
     assert "(?:(?:a|b|rc)" in raw
     assert 'git show-ref --verify --quiet "$tag_ref"' in raw

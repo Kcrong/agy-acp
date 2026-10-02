@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -129,6 +130,28 @@ def start_mcp_servers() -> list[subprocess.Popen[bytes]]:
             if not response or json.loads(response).get("id") != request["id"]:
                 raise RuntimeError
     return processes
+
+
+def close_mcp_servers(processes: list[subprocess.Popen[bytes]]) -> None:
+    for process in processes:
+        if process.stdin is not None:
+            with contextlib.suppress(BrokenPipeError, OSError):
+                process.stdin.close()
+    for process in processes:
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=1)
+        if process.stdout is not None:
+            process.stdout.close()
+    if processes and MARKER_ROOT is not None:
+        (MARKER_ROOT / f"mcp-reaped-{os.getpid()}").write_text(
+            str(len(processes)),
+            encoding="utf-8",
+        )
 
 
 if MODE == "no-init":
@@ -380,3 +403,4 @@ for line in sys.stdin:
         )
         continue
     emit(result())
+close_mcp_servers(mcp_processes)
