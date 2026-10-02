@@ -52,7 +52,7 @@ def test_public_readme_and_project_urls_are_explicit() -> None:
     assert project["license"] == "Apache-2.0"
     assert project["keywords"] == ["acp", "agent-client-protocol", "antigravity", "adapter"]
     assert project["classifiers"] == [
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 5 - Production/Stable",
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: MacOS",
         "Operating System :: POSIX :: Linux",
