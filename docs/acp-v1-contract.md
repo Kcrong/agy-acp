@@ -86,7 +86,7 @@ ACP v1 requires every agent to support client-provided stdio MCP servers. `agy-a
 
 The installed `agy` process and generated launcher processes are an explicit trusted boundary. The current upstream interface requires them to receive the process-scoped encoded specifications, so the adapter does not claim to protect MCP commands or credentials from a compromised `agy` process, a modified launcher, or arbitrary children launched directly by either. Scrubbing ensures that each final MCP target receives no internal specification variables and only its requested environment overrides.
 
-Deterministic tests cover one and many servers, virtualenv and user-site launcher lookup, hostile workspace import hooks, active config timing, random name collision avoidance, project working-directory preservation, concurrent session and environment isolation, launcher failure, initial and in-flight spawn failure, repeated spawn cancellation and deadline, prompt success/failure/cancellation/timeout, `session/close`, client disconnect, descendant process cleanup, parent-path substitution, bounded stale-root scavenging, and cleanup retry. Credential-safe live probes separately confirmed lazy startup, two concurrent isolated sessions, and temporary-config precedence for duplicate project server names on `agy 1.2.14`.
+Deterministic tests cover one and many servers, virtualenv and user-site launcher lookup, hostile workspace import hooks, active config timing, random name collision avoidance, project working-directory preservation, concurrent session and environment isolation, launcher failure, initial and in-flight spawn failure, repeated spawn cancellation and deadline, prompt success/failure/cancellation/timeout, `session/close`, client disconnect, descendant process cleanup, shared one-signal cleanup, explicit fixture-child reaping, transient zombie-only and persistent Darwin `EPERM`, parent-path substitution, bounded stale-root scavenging, and cleanup retry. Credential-safe live probes separately confirmed lazy startup, two concurrent isolated sessions, and temporary-config precedence for duplicate project server names on `agy 1.2.14`.
 
 HTTP, SSE, and ACP MCP transports remain unsupported and unadvertised.
 
@@ -176,8 +176,8 @@ Cancellation is a terminal race with exactly one winner.
 1. Mark the prompt as cancelling.
 2. Signal the complete process group on Linux and macOS.
 3. Wait for a structured result or exit during a bounded grace period.
-4. Escalate to a hard process-group termination if needed.
-5. Await a bounded cleanup barrier.
+4. Join one shared cleanup task that sends hard termination at most once and polls for process-group disappearance.
+5. Treat only `ESRCH` as terminal proof; transient Darwin `EPERM` remains pending, while persistent `EPERM` or a live group at the deadline fails closed without releasing owned MCP state.
 6. Complete the original ACP prompt with `cancelled`.
 
 A prompt timeout uses the same shutdown path but returns a timeout error. Session cancellation returns a valid `PromptResponse` with `stopReason=cancelled`. Request-level `$/cancel_request` cancels the matching request task and returns error `-32800` for that request. Session cancellation, request cancellation, timeout, process exit, and normal result must never complete the same prompt more than once.

@@ -25,6 +25,8 @@ from agy_acp.mcp import MCP_ENV_PREFIX, MCP_SCRUBBED_ENVIRONMENT
 from agy_acp.ndjson import NdjsonParser
 from agy_acp.transport import encode_json_line
 
+_PROCESS_GROUP_POLL_INTERVAL = 0.01
+
 
 @dataclass(frozen=True, slots=True)
 class _ProcessEnd:
@@ -70,6 +72,8 @@ class AgyProcess:
     ) -> None:
         self._config = config
         self._process = process
+        self._process_group_id = process.pid
+        self._process_group_cleanup: asyncio.Task[None] | None = None
         self._events: asyncio.Queue[AgyEvent | BackendProcessError | _ProcessEnd] = asyncio.Queue(
             maxsize=config.max_pending_events
         )
@@ -245,6 +249,8 @@ class AgyProcess:
     @property
     def closed(self) -> bool:
         tasks = [self._stdout_task, self._stderr_task, self._exit_task]
+        if self._process_group_cleanup is not None:
+            tasks.append(self._process_group_cleanup)
         if self._fault_cleanup is not None:
             tasks.append(self._fault_cleanup)
         return self._closed and self._shutdown_callback_done and all(task.done() for task in tasks)
@@ -427,15 +433,11 @@ class AgyProcess:
                 self._signal_gracefully()
             exited = await self._wait_for_exit(self._config.cancel_grace)
             if not exited:
-                await self._kill_tree()
-                exited = await self._wait_for_exit(self._config.kill_grace)
-            if not exited:
-                with contextlib.suppress(ProcessLookupError):
-                    self._process.kill()
+                await self._ensure_process_group_gone()
                 exited = await self._wait_for_exit(self._config.kill_grace)
             if not exited:
                 raise BackendShutdownError
-            await self._kill_tree()
+            await self._ensure_process_group_gone()
             await self._join_io_tasks()
             if discard_events:
                 self._clear_events()
@@ -462,9 +464,47 @@ class AgyProcess:
             with contextlib.suppress(ProcessLookupError):
                 self._process.terminate()
 
-    async def _kill_tree(self) -> None:
-        with contextlib.suppress(ProcessLookupError):
-            _kill_process_group(self._process.pid, _signal_by_name("SIGKILL"))
+    async def _ensure_process_group_gone(self) -> None:
+        cleanup = self._process_group_cleanup
+        if cleanup is None:
+            cleanup = asyncio.create_task(
+                self._remove_process_group(),
+                name="agy-acp.process-group-cleanup",
+            )
+            self._process_group_cleanup = cleanup
+        try:
+            await asyncio.shield(cleanup)
+        except asyncio.CancelledError:
+            raise
+        except BackendProcessError:
+            raise
+        except Exception:
+            raise BackendShutdownError from None
+
+    async def _remove_process_group(self) -> None:
+        try:
+            _kill_process_group(self._process_group_id, _signal_by_name("SIGKILL"))
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            pass
+        except (OSError, ValueError):
+            raise BackendShutdownError from None
+
+        deadline = asyncio.get_running_loop().time() + self._config.kill_grace
+        while True:
+            try:
+                _kill_process_group(self._process_group_id, 0)
+            except ProcessLookupError:
+                return
+            except PermissionError:
+                pass
+            except (OSError, ValueError):
+                raise BackendShutdownError from None
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise BackendShutdownError
+            await asyncio.sleep(min(_PROCESS_GROUP_POLL_INTERVAL, remaining))
 
     async def _wait_for_exit(self, timeout: float) -> bool:
         if self._process.returncode is not None:
@@ -522,7 +562,13 @@ class AgyProcess:
             await asyncio.sleep(0.01)
         returncode = self._process.returncode
         self._root_exited.set()
-        await self._kill_tree()
+        try:
+            await self._ensure_process_group_gone()
+        except BackendProcessError as error:
+            if not self._discard_events:
+                self._clear_events()
+                self._events.put_nowait(error)
+            return
         await asyncio.gather(
             self._stdout_task,
             self._stderr_task,

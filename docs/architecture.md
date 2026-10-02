@@ -148,7 +148,9 @@ Deterministic tests cover success, startup and launcher failure, cancellation, t
 - Windows is not a supported platform and has no CI or process-control contract in this implementation.
 - Persistent `agy` processes run without print-mode or child timeout flags; `AgyProcess` owns all deadlines.
 - Graceful termination is attempted first.
-- Hard termination is bounded and awaited before a lifecycle is considered closed.
+- One shared cleanup task owns the destructive process-group signal across explicit shutdown and root-exit observation; concurrent callers join it rather than signaling the PGID again.
+- Group cleanup treats only `ESRCH` as proof that the group disappeared. Darwin `EPERM` remains pending because a zombie-only group can produce it; persistent `EPERM` or a still-live group at the deadline fails closed with `BackendShutdownError`.
+- Hard termination and disappearance verification are bounded and awaited before a lifecycle is considered closed.
 - Platform-specific behavior is isolated behind one process-control interface and tested with fake descendants that remain in the inherited group.
 - MCP servers that daemonize, call `setsid()`, or otherwise leave the inherited process group are unsupported and outside the cleanup guarantee.
 
@@ -176,7 +178,7 @@ Selected Actions:
 | `actions/download-artifact` | `v8.0.1` | `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c` | Node 24 |
 | `pypa/gh-action-pypi-publish` | `v1.14.2` | `dc37677b2e1c63e2034f94d8a5b11f265b73ba33` | Composite/container |
 
-The workflow pins uv `0.12.21`, installs from `uv.lock` with frozen resolution, grants read-only repository permissions, and exposes no repository secrets to pull-request code. The Ubuntu/Python 3.14 cell also runs the pinned experimental ACP TCK and retains its JSON report. Every cell builds distributions, runs Twine strict metadata checks, validates exact wheel/sdist manifests, and installs the wheel in a clean environment.
+The workflow pins uv `0.12.21`, installs from `uv.lock` with frozen resolution, grants read-only repository permissions, and exposes no repository secrets to pull-request code. The Ubuntu/Python 3.14 cell also runs the pinned experimental ACP TCK and retains its JSON report. The macOS/Python 3.13 cell repeats concurrent MCP cleanup 20 times to exercise Darwin process-group retirement. Every cell builds distributions, runs Twine strict metadata checks, validates exact wheel/sdist manifests, and installs the wheel in a clean environment.
 
 A separate manual `publish.yml` workflow validates an existing annotated `v<version>` tag on `main`, repeats the four supported test cells, builds and validates one immutable artifact, and transfers that exact artifact to a protected `pypi` environment. That environment accepts protected branches, requires `Kcrong` as its sole reviewer, and allows self-review so the sole maintainer can release; the repository administrator account is therefore an explicit publication trust boundary. Only the final publish job receives `id-token: write`; it uses PyPI Trusted Publishing and no password or repository secret. Human environment approval remains required before the irreversible upload.
 

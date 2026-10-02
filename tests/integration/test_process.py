@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import signal
 import sys
 import time
 from dataclasses import replace
@@ -8,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+import agy_acp.process as process_module
 from agy_acp.config import AgyProcessConfig
 from agy_acp.errors import (
     BackendExitedError,
@@ -33,6 +35,7 @@ def config(
     max_pending_events: int = 8,
     write_timeout: float = 0.2,
     init_timeout: float = 2,
+    kill_grace: float = 2,
 ) -> AgyProcessConfig:
     return AgyProcessConfig(
         command=AgyCommand(
@@ -46,7 +49,7 @@ def config(
         init_timeout=init_timeout,
         write_timeout=write_timeout,
         cancel_grace=0.15,
-        kill_grace=2,
+        kill_grace=kill_grace,
     )
 
 
@@ -181,6 +184,74 @@ async def test_idle_root_exit_reaps_descendants_in_background(tmp_path: Path) ->
 
     assert process.returncode == 0
     assert not list(tmp_path.glob("descendant-survived-*"))
+
+
+@pytest.mark.asyncio
+async def test_process_group_cleanup_waits_through_darwin_zombie_eperm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = await AgyProcess.launch(config(tmp_path, "normal", kill_grace=0.2))
+    probes: list[BaseException | None] = [
+        PermissionError(),
+        PermissionError(),
+        ProcessLookupError(),
+    ]
+    signals: list[int] = []
+
+    def scripted_kill_group(pid: int, requested_signal: int) -> None:
+        assert pid == process.pid
+        signals.append(requested_signal)
+        if requested_signal != 0:
+            return
+        outcome = probes.pop(0)
+        if outcome is not None:
+            raise outcome
+
+    with monkeypatch.context() as patch:
+        patch.setattr(process_module, "_kill_process_group", scripted_kill_group)
+        await asyncio.gather(process.close(), process.close())
+
+    assert signals.count(signal.SIGKILL) == 1
+    assert signals.count(0) == 3
+    assert process.closed
+    assert probes == []
+
+
+@pytest.mark.asyncio
+async def test_persistent_process_group_eperm_fails_closed_without_resignal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback_calls: list[None] = []
+    process = await AgyProcess.launch(
+        replace(
+            config(tmp_path, "normal", kill_grace=0.03),
+            shutdown_callback=lambda: callback_calls.append(None),
+        )
+    )
+    signals: list[int] = []
+
+    def deny_process_group(pid: int, requested_signal: int) -> None:
+        assert pid == process.pid
+        signals.append(requested_signal)
+        raise PermissionError
+
+    with monkeypatch.context() as patch:
+        patch.setattr(process_module, "_kill_process_group", deny_process_group)
+        with pytest.raises(BackendShutdownError, match="shutdown failed"):
+            await process.close()
+        attempts = len(signals)
+        with pytest.raises(BackendShutdownError, match="shutdown failed"):
+            await process.close()
+
+    assert attempts > 1
+    assert len(signals) == attempts
+    assert signals.count(signal.SIGKILL) == 1
+    assert not process.closed
+    assert callback_calls == []
+    await asyncio.sleep(0)
+    assert not _active_process_tasks()
 
 
 @pytest.mark.asyncio
