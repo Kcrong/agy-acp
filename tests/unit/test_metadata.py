@@ -69,6 +69,20 @@ def test_public_readme_and_project_urls_are_explicit() -> None:
     }
 
 
+def test_readme_badges_are_dynamic_and_scoped() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    expected = [
+        "https://github.com/Kcrong/agy-acp/actions/workflows/ci.yml/badge.svg",
+        "https://img.shields.io/pypi/v/agy-acp?include_prereleases",
+        "https://img.shields.io/pypi/pyversions/agy-acp",
+        "https://img.shields.io/pypi/l/agy-acp",
+    ]
+    for badge in expected:
+        assert readme.count(badge) == 1
+    assert "https://pypi.org/project/agy-acp/" in readme
+    assert "](./LICENSE)" in readme
+
+
 def test_readme_remains_concise_and_scope_limited() -> None:
     lines = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8").splitlines()
     assert [line for line in lines if line.startswith("## ")] == [
