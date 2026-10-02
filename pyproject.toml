@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agy-acp"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "ACP v1 adapter for the Google Antigravity CLI"
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
