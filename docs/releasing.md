@@ -12,11 +12,11 @@ PyPI releases use GitHub Actions Trusted Publishing. No PyPI token, username, pa
    - Workflow name: `publish.yml`
    - Environment name: `pypi`
 3. Create a GitHub Actions environment named `pypi` with all of these protection rules:
-   - Under **Deployment branches and tags**, choose **Selected branches and tags** and allow only `main`.
-   - Require an independent release reviewer who is not the workflow initiator.
-   - Enable **Prevent self-review**.
+   - Under **Deployment branches and tags**, choose **Protected branches only**. The `main` protection ruleset must remain active.
+   - Require `Kcrong` as the sole release reviewer.
+   - Leave **Prevent self-review** disabled so the sole maintainer can approve a release they initiated.
 
-Do not leave either the PyPI publisher environment or the GitHub deployment environment unrestricted as `(Any)`.
+Do not leave the PyPI publisher environment unrestricted as `(Any)`. The single-maintainer approval model intentionally treats the `Kcrong` repository administrator account as the publication trust boundary; compromise or misuse of that account can authorize publication.
 
 A pending publisher does not reserve the project name. The first successful trusted publication creates the project if the name remains available.
 

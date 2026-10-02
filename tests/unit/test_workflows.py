@@ -106,9 +106,10 @@ def test_release_runbook_matches_pending_publisher_identity() -> None:
         "Repository name: `agy-acp`",
         "Workflow name: `publish.yml`",
         "Environment name: `pypi`",
-        "allow only `main`",
-        "independent release reviewer",
-        "Prevent self-review",
+        "Protected branches only",
+        "`Kcrong` as the sole release reviewer",
+        "Prevent self-review** disabled",
         "unrestricted as `(Any)`",
+        "publication trust boundary",
     ):
         assert expected in runbook
