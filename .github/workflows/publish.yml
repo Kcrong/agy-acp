@@ -1,0 +1,224 @@
+name: Publish to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing vX.Y.Z or prerelease tag on main to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-pypi
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      WORKFLOW_REF: ${{ github.ref }}
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Validate input shape
+        run: >-
+          python3 -c
+          'import os, re, sys;
+          valid_tag = re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:(?:a|b|rc)(?:0|[1-9][0-9]*))?", os.environ["RELEASE_TAG"]);
+          sys.exit(0 if valid_tag and os.environ["WORKFLOW_REF"] == "refs/heads/main" else 1)'
+
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: refs/tags/${{ inputs.release_tag }}
+
+      - name: Validate tag, metadata, and main ancestry
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "$RELEASE_TAG" = "v$version"
+          tag_ref="refs/tags/$RELEASE_TAG"
+          git show-ref --verify --quiet "$tag_ref"
+          test "$(git cat-file -t "$tag_ref")" = "tag"
+          test "$(git rev-parse "$tag_ref^{commit}")" = "$(git rev-parse HEAD)"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor HEAD origin/main
+          lock_version="$(python3 -c 'import tomllib; data=tomllib.load(open("uv.lock", "rb")); print(next(item["version"] for item in data["package"] if item["name"] == "agy-acp"))')"
+          test "$version" = "$lock_version"
+          printf 'commit=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    needs: validate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+        python-version:
+          - "3.13"
+          - "3.14"
+    steps:
+      - name: Check out validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.validate.outputs.commit }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.21"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Verify lock consistency
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --frozen --all-groups --python "${{ matrix.python-version }}"
+
+      - name: Check formatting
+        run: uv run --frozen ruff format --check .
+
+      - name: Lint
+        run: uv run --frozen ruff check .
+
+      - name: Type check
+        run: uv run --frozen mypy
+
+      - name: Test
+        run: uv run --frozen pytest
+
+      - name: Run pinned experimental ACP TCK
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14' }}
+        run: >-
+          uv run --frozen --group tck python scripts/tck_smoke.py
+          --report-json "$RUNNER_TEMP/acp-tck-report.json"
+
+      - name: Upload release ACP TCK report
+        if: ${{ always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-acp-tck-report
+          path: ${{ runner.temp }}/acp-tck-report.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  build:
+    name: Build release distributions
+    needs:
+      - validate
+      - test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      UV_PYTHON: "3.14"
+    steps:
+      - name: Check out validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.validate.outputs.commit }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.21"
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Verify lock consistency
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --frozen --all-groups --python 3.14
+
+      - name: Build once
+        run: uv build --no-build-isolation --out-dir "$RUNNER_TEMP/dist"
+
+      - name: Check distribution metadata
+        run: uv run --frozen twine check --strict "$RUNNER_TEMP"/dist/*
+
+      - name: Verify distribution archives and installation
+        run: uv run --frozen python scripts/package_smoke.py "$RUNNER_TEMP/dist"
+
+      - name: Record immutable artifact hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/dist"
+          {
+            echo '## Release artifact SHA-256'
+            echo '```text'
+            sha256sum *.whl *.tar.gz
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload validated distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pypi-distributions
+          path: |
+            ${{ runner.temp }}/dist/*.whl
+            ${{ runner.temp }}/dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish validated distributions
+    needs:
+      - validate
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/agy-acp/${{ needs.validate.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download validated distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pypi-distributions
+          path: dist
+
+      - name: Publish with PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist
+          verify-metadata: true
+          skip-existing: false
+          verbose: false
+          print-hash: true
+          attestations: true

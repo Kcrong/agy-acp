@@ -2,24 +2,36 @@
 
 ## Purpose
 
-`agy-acp` is a security-focused ACP v1 adapter for the Antigravity CLI (`agy`) on Linux and macOS. It supports Python 3.13 and 3.14. Complete ACP v1 compatibility is not yet claimed.
+`agy-acp` is a security-focused ACP v1 adapter for the Antigravity CLI (`agy`). It exposes an authenticated local `agy` installation to ACP clients over standard input and output. The project passes a pinned revision of the experimental official ACP TCK, but that tool does not certify complete protocol coverage.
+
+## Requirements
+
+- Linux or macOS
+- Python 3.13 or 3.14
+- An installed and authenticated `agy` executable
+
+Windows is outside the current support scope.
 
 ## Installation
 
-Install the current repository revision directly from GitHub:
+Until the first PyPI release, install the current reviewed source from GitHub:
 
 ```bash
 python -m pip install "git+https://github.com/Kcrong/agy-acp.git"
 ```
 
-A reproducible installation can pin any reviewed 40-character commit SHA:
+A reproducible installation can pin a reviewed 40-character commit SHA:
 
 ```bash
 python -m pip install "git+https://github.com/Kcrong/agy-acp.git@<commit-sha>"
 ```
 
-Python 3.13 or 3.14 and an installed, authenticated `agy` executable are required.
+After a release is published on PyPI, install that release with:
 
-## Implementation overview
+```bash
+python -m pip install agy-acp
+```
 
-The `agy-acp` console entry point serves bounded NDJSON over stdio, validates ACP requests before dispatch, and launches `agy` without a shell. Sessions use isolated process generations, opaque conversation resumption, ordered text streaming, bounded cancellation, process-group cleanup, and private process-scoped configuration for client-provided stdio MCP servers. Verified conditional support includes `session/close` and ordered absolute `additionalDirectories`; HTTP, SSE, and ACP MCP transports remain unsupported, and `session/load` remains unadvertised until complete ordered history replay is proven. The adapter adds no telemetry or independent network service; data forwarded to `agy` remains subject to the installed CLI and account configuration.
+## Privacy and support
+
+The adapter adds no telemetry, network listener, or credential store. Prompts, responses, MCP configuration, and account access remain subject to the installed `agy` CLI and its configured services. Client-provided stdio MCP servers, `session/resume`, `session/close`, and ordered absolute `additionalDirectories` are supported. HTTP, SSE, and ACP MCP transports are unsupported, and `session/load` remains unavailable because `agy` does not provide complete ordered history replay.

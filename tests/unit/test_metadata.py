@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import tomllib
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
+
+from agy_acp import __version__
 
 PROJECT_ROOT = Path(__file__).parents[2]
 
@@ -10,6 +13,11 @@ PROJECT_ROOT = Path(__file__).parents[2]
 def load_project() -> dict[str, Any]:
     with (PROJECT_ROOT / "pyproject.toml").open("rb") as pyproject:
         return tomllib.load(pyproject)
+
+
+def test_project_version_is_the_runtime_source() -> None:
+    expected = load_project()["project"]["version"]
+    assert expected == version("agy-acp") == __version__
 
 
 def test_supported_python_range_is_exact() -> None:
@@ -42,6 +50,18 @@ def test_public_readme_and_project_urls_are_explicit() -> None:
     project = load_project()["project"]
     assert project["readme"] == "README.md"
     assert project["license"] == "Apache-2.0"
+    assert project["keywords"] == ["acp", "agent-client-protocol", "antigravity", "adapter"]
+    assert project["classifiers"] == [
+        "Development Status :: 3 - Alpha",
+        "License :: OSI Approved :: Apache Software License",
+        "Operating System :: MacOS",
+        "Operating System :: POSIX :: Linux",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+        "Typing :: Typed",
+    ]
+    assert all("Windows" not in classifier for classifier in project["classifiers"])
     assert project["urls"] == {
         "Repository": "https://github.com/Kcrong/agy-acp",
         "Issues": "https://github.com/Kcrong/agy-acp/issues",
@@ -53,16 +73,18 @@ def test_readme_remains_concise_and_scope_limited() -> None:
     lines = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8").splitlines()
     assert [line for line in lines if line.startswith("## ")] == [
         "## Purpose",
+        "## Requirements",
         "## Installation",
-        "## Implementation overview",
+        "## Privacy and support",
     ]
-    assert len(lines) <= 40
+    assert len(lines) <= 45
 
 
 def test_sdist_public_file_allowlist_is_explicit() -> None:
-    include = load_project()["tool"]["hatch"]["build"]["targets"]["sdist"]["include"]
-    assert include == [
+    sdist = load_project()["tool"]["hatch"]["build"]["targets"]["sdist"]
+    assert sdist["include"] == [
         "src/agy_acp",
+        ".gitignore",
         "pyproject.toml",
         "uv.lock",
         "README.md",

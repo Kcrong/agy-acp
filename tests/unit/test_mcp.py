@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from agy_acp import __version__
 from agy_acp.errors import InvalidMcpConfigError, McpHandoffError
 from agy_acp.mcp import (
     MCP_ENV_PREFIX,
@@ -144,6 +145,12 @@ def test_safe_launcher_flags_retain_user_site_lookup(tmp_path: Path) -> None:
     source_package = Path(__file__).parents[2] / "src" / "agy_acp"
     package.parent.mkdir(parents=True)
     shutil.copytree(source_package, package)
+    distribution = user_site / f"agy_acp-{__version__}.dist-info"
+    distribution.mkdir()
+    (distribution / "METADATA").write_text(
+        f"Metadata-Version: 2.4\nName: agy-acp\nVersion: {__version__}\n",
+        encoding="utf-8",
+    )
     hostile = workspace / "agy_acp"
     hostile.mkdir()
     (hostile / "__init__.py").write_text("", encoding="utf-8")

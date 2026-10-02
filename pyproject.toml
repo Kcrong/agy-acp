@@ -4,12 +4,23 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agy-acp"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "ACP v1 adapter for the Google Antigravity CLI"
 readme = "README.md"
 requires-python = ">=3.13,<3.15"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+keywords = ["acp", "agent-client-protocol", "antigravity", "adapter"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Typing :: Typed",
+]
 dependencies = [
   "agent-client-protocol==0.12.1",
 ]
@@ -29,7 +40,15 @@ dev = [
   "pytest==9.1.1",
   "pytest-asyncio==1.4.0",
   "pytest-timeout==2.4.0",
+  "pyyaml==6.0.3",
+  "types-pyyaml==6.0.12.20260906",
   "ruff==0.16.9",
+]
+tck = [
+  "acp-tck @ git+https://github.com/agentclientprotocol/acp-tck.git@9b4334813bc4a3583285592027cc2f3ab85793bd ; python_version >= '3.14'",
+]
+release = [
+  "twine==7.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -38,6 +57,7 @@ packages = ["src/agy_acp"]
 [tool.hatch.build.targets.sdist]
 include = [
   "src/agy_acp",
+  ".gitignore",
   "pyproject.toml",
   "uv.lock",
   "README.md",

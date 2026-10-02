@@ -10,7 +10,22 @@ from pathlib import Path
 
 MODE = sys.argv[1]
 MARKER_ROOT = Path(sys.argv[2]) if len(sys.argv) > 2 and Path(sys.argv[2]).is_absolute() else None
-CONVERSATION_ID = f"fake-{Path.cwd().name}" if MODE in {"unique", "mcp-unique"} else "fake-session"
+
+
+def argument_value(name: str) -> str | None:
+    try:
+        index = sys.argv.index(name, 2)
+        return sys.argv[index + 1]
+    except (IndexError, ValueError):
+        return None
+
+
+if MODE == "tck":
+    CONVERSATION_ID = argument_value("--conversation") or f"fake-{os.getpid()}"
+elif MODE in {"unique", "mcp-unique"}:
+    CONVERSATION_ID = f"fake-{Path.cwd().name}"
+else:
+    CONVERSATION_ID = "fake-session"
 INIT_CONVERSATION_ID = "fake\x00session" if MODE == "nul-conversation" else CONVERSATION_ID
 INIT_CWD = "safe\x00cwd" if MODE == "nul-cwd" else os.getcwd()
 
@@ -292,6 +307,9 @@ for line in sys.stdin:
             },
         }
     )
+    if MODE == "tck" and "agy-acp-tck-cancel" in json.dumps(payload, separators=(",", ":")):
+        time.sleep(30)
+        continue
     if MODE in {
         "hang",
         "ignore-term",

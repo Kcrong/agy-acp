@@ -20,11 +20,14 @@ from acp.schema import (
     AgentCapabilities,
     CloseSessionResponse,
     Implementation,
+    McpCapabilities,
     PromptCapabilities,
     ResourceContentBlock,
+    ResumeSessionResponse,
     SessionAdditionalDirectoriesCapabilities,
     SessionCapabilities,
     SessionCloseCapabilities,
+    SessionResumeCapabilities,
     TextContentBlock,
 )
 from pydantic import ValidationError
@@ -266,9 +269,11 @@ class AgyAgent:
             protocol_version=PROTOCOL_VERSION,
             agent_capabilities=AgentCapabilities(
                 prompt_capabilities=PromptCapabilities(),
+                mcp_capabilities=McpCapabilities(http=False, sse=False, acp=None),
                 session_capabilities=SessionCapabilities(
                     close=SessionCloseCapabilities(),
                     additional_directories=SessionAdditionalDirectoriesCapabilities(),
+                    resume=SessionResumeCapabilities(),
                 ),
             ),
             agent_info=Implementation(name="agy-acp", version=__version__),
@@ -388,6 +393,123 @@ class AgyAgent:
                 if current is not None:
                     self._starting_tasks.discard(current)
 
+    async def resume_session(
+        self,
+        *,
+        session_id: str,
+        cwd: str,
+        mcp_servers: list[object],
+        additional_directories: list[str] | None = None,
+    ) -> ResumeSessionResponse:
+        try:
+            parsed_mcp_servers = resolve_mcp_servers(parse_mcp_servers(mcp_servers))
+        except InvalidMcpConfigError:
+            raise _invalid_params() from None
+        additional_paths = _parse_additional_directories(additional_directories)
+        workspace = Path(cwd)
+        if not workspace.is_absolute() or not workspace.is_dir():
+            raise _invalid_params()
+        process_config = AgyProcessConfig(
+            command=self._config.command,
+            cwd=workspace,
+            conversation_id=session_id,
+            additional_directories=additional_paths,
+            max_line_bytes=self._config.max_line_bytes,
+            max_stderr_bytes=self._config.max_stderr_bytes,
+            max_pending_events=self._config.max_pending_events,
+            init_timeout=self._config.init_timeout,
+            write_timeout=self._config.write_timeout,
+            cancel_grace=self._config.cancel_grace,
+            kill_grace=self._config.kill_grace,
+        )
+
+        async with self._admission_lock:
+            if self._closing:
+                raise _backend_unavailable()
+            existing = self._sessions.get(session_id)
+            if existing is not None:
+                if existing.closed or existing.unusable:
+                    raise AcpRequestError(-32015, "Session not found")
+                if existing.process is not None and existing.process.closed:
+                    existing.process = None
+                if (
+                    existing.active_prompt is not None
+                    or existing.process is not None
+                    or existing.cancel_cleanup is not None
+                ):
+                    raise AcpRequestError(-32013, "Session busy")
+                if existing.process_config.cwd.resolve() != workspace.resolve():
+                    raise _invalid_params()
+                existing.process_config = process_config
+                existing.mcp_servers = parsed_mcp_servers
+                return ResumeSessionResponse()
+
+        await self._reserve_session()
+        reserved = True
+        starting_process: AgyProcess | None = None
+
+        def remember_start(process: AgyProcess) -> None:
+            nonlocal starting_process
+            starting_process = process
+
+        try:
+            try:
+                launch_config = self._prepare_process_config(
+                    process_config,
+                    parsed_mcp_servers,
+                )
+                process = await AgyProcess.launch(
+                    launch_config,
+                    on_started=remember_start,
+                )
+            except McpHandoffError:
+                raise _backend_unavailable() from None
+            except BackendTimeoutError:
+                if starting_process is not None and not starting_process.closed:
+                    self._orphaned_processes.add(starting_process)
+                raise AcpRequestError(-32011, "Initialization timed out") from None
+            except BackendProcessError:
+                if starting_process is not None and not starting_process.closed:
+                    self._orphaned_processes.add(starting_process)
+                raise _backend_unavailable() from None
+            try:
+                if (
+                    process.init_event.conversation_id != session_id
+                    or Path(process.init_event.cwd).resolve() != workspace.resolve()
+                ):
+                    raise _backend_unavailable()
+                try:
+                    await process.retire()
+                except BackendProcessError:
+                    if not process.closed:
+                        self._orphaned_processes.add(process)
+                    raise _backend_unavailable() from None
+                async with self._admission_lock:
+                    if self._closing or session_id in self._sessions:
+                        raise _backend_unavailable()
+                    self._sessions[session_id] = _Session(
+                        process_config=process_config,
+                        mcp_servers=parsed_mcp_servers,
+                        process=None,
+                    )
+                    self._starting_sessions -= 1
+                    reserved = False
+                return ResumeSessionResponse()
+            except BaseException:
+                if process not in self._orphaned_processes and not process.closed:
+                    try:
+                        await process.close()
+                    except BackendProcessError:
+                        self._orphaned_processes.add(process)
+                raise
+        finally:
+            async with self._admission_lock:
+                if reserved:
+                    self._starting_sessions -= 1
+                current = asyncio.current_task()
+                if current is not None:
+                    self._starting_tasks.discard(current)
+
     async def _reserve_session(self) -> None:
         current = asyncio.current_task()
         if current is None:
@@ -472,6 +594,16 @@ class AgyAgent:
                     on_started=attach_start,
                     timeout=self._remaining_prompt_time(deadline),
                 )
+        except asyncio.CancelledError:
+            if started_process is not None and not self._is_cancelling(session):
+                if session.process is started_process:
+                    session.process = None
+                if not started_process.closed:
+                    try:
+                        await started_process.cancel()
+                    except BackendProcessError:
+                        await self._mark_unusable(session_id, session, started_process)
+            raise
         except BackendTimeoutError:
             if started_process is not None:
                 if started_process.closed:

@@ -201,6 +201,46 @@ async def test_stdio_session_cancel_completes_prompt_as_cancelled(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_stdio_resume_continues_without_history_replay(tmp_path: Path) -> None:
+    process = await start_server(tmp_path, "tck")
+    await initialize(process)
+    session_id = await new_session(process, tmp_path)
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "session/resume",
+            "params": {"sessionId": session_id, "cwd": str(tmp_path), "mcpServers": None},
+        },
+    )
+
+    assert await receive(process) == {"jsonrpc": "2.0", "id": 3, "result": {}}
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "session/prompt",
+            "params": {
+                "sessionId": session_id,
+                "prompt": [{"type": "text", "text": "continued"}],
+            },
+        },
+    )
+    update = await receive(process)
+    response = await receive(process)
+    assert update["method"] == "session/update"
+    assert update["params"]["sessionId"] == session_id
+    assert response == {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {"stopReason": "end_turn"},
+    }
+    await stop_server(process)
+
+
+@pytest.mark.asyncio
 async def test_stdio_rejects_unknown_method_and_accepts_stdio_mcp(tmp_path: Path) -> None:
     process = await start_server(tmp_path, "normal")
     await initialize(process)
@@ -560,7 +600,7 @@ async def test_stdio_keeps_valid_record_before_coalesced_parse_error(
 
 
 @pytest.mark.asyncio
-async def test_stdio_rejects_protocol_version_without_common_v1(tmp_path: Path) -> None:
+async def test_stdio_negotiates_unsupported_lower_protocol_version(tmp_path: Path) -> None:
     process = await start_server(tmp_path, "normal")
     await send(
         process,
@@ -571,6 +611,96 @@ async def test_stdio_rejects_protocol_version_without_common_v1(tmp_path: Path) 
             "params": {"protocolVersion": 0, "clientCapabilities": {}},
         },
     )
+    response = await receive(process)
+    assert response["id"] == 1
+    assert response["result"]["protocolVersion"] == 1
+    await stop_server(process)
+
+
+@pytest.mark.asyncio
+async def test_stdio_negotiates_future_version_with_v2_info(tmp_path: Path) -> None:
+    process = await start_server(tmp_path, "normal")
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": 65535,
+                "clientCapabilities": {},
+                "info": {"name": "acp-tck", "version": "0.2.0"},
+            },
+        },
+    )
+
+    response = await receive(process)
+    assert response["result"]["protocolVersion"] == 1
+    capabilities = response["result"]["agentCapabilities"]
+    assert capabilities["mcpCapabilities"] == {"http": False, "sse": False}
+    assert capabilities["sessionCapabilities"]["resume"] == {}
+    await stop_server(process)
+
+
+@pytest.mark.asyncio
+async def test_stdio_negotiates_canonical_v2_initialize_shape(tmp_path: Path) -> None:
+    process = await start_server(tmp_path, "normal")
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": 2,
+                "capabilities": {},
+                "info": {"name": "future-client", "version": "2"},
+            },
+        },
+    )
+
+    response = await receive(process)
+    assert response["id"] == 1
+    assert response["result"]["protocolVersion"] == 1
+    await stop_server(process)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "params",
+    [
+        {
+            "protocolVersion": 1,
+            "clientCapabilities": {},
+            "info": {"name": "unexpected", "version": "1"},
+        },
+        {
+            "protocolVersion": 65535,
+            "clientCapabilities": {},
+            "info": {"name": "missing-version"},
+        },
+        {
+            "protocolVersion": 2,
+            "capabilities": [],
+            "info": {"name": "future-client", "version": "2"},
+        },
+        {
+            "protocolVersion": 1,
+            "capabilities": {},
+            "info": {"name": "wrong-shape", "version": "1"},
+        },
+    ],
+)
+async def test_stdio_rejects_invalid_future_version_info(
+    tmp_path: Path,
+    params: dict[str, object],
+) -> None:
+    process = await start_server(tmp_path, "normal")
+    await send(
+        process,
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": params},
+    )
+
     assert await receive(process) == {
         "jsonrpc": "2.0",
         "id": 1,

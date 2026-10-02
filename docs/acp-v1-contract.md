@@ -39,7 +39,7 @@ The adapter must follow these invariants:
 
 | Direction | Method | Adapter responsibility |
 | --- | --- | --- |
-| Client to agent request | `initialize` | Negotiate ACP v1 and advertise only verified capabilities. |
+| Client to agent request | `initialize` | Negotiate ACP v1, answer any unsupported protocol version with the latest supported version, and advertise only verified capabilities. |
 | Client to agent request | `session/new` | Validate the workspace and stdio MCP specifications, register them for lazy first-prompt startup, and create an isolated `agy` session. |
 | Client to agent request | `session/prompt` | Serialize supported content, run one turn, stream updates, and return one terminal stop reason. |
 | Client to agent notification | `session/cancel` | Cancel the active turn and return `cancelled` from the original prompt request. |
@@ -53,16 +53,17 @@ The following surface is advertised only after its success, rejection, cancellat
 
 | Method or field | Upstream support | Activation condition |
 | --- | --- | --- |
+| `session/resume` | `agy --conversation` resumes identity without replaying prior messages | Validate the opaque identity and working directory, register or atomically reconfigure an idle session, preserve ordered additional directories and strict stdio MCP handling, and emit no history updates. |
 | `session/load` | `agy --conversation` resumes identity; the tested EOF/no-prompt path did not replay history | Do not advertise until complete ordered history replay is proven; resumption without replay is insufficient. |
 | `session/close` | Explicit adapter cleanup | The project dispatcher handles the stable method without enabling unrelated SDK unstable routes; active work is cancelled before all resources are released. |
 | `additionalDirectories` | Repeated `agy --add-dir` | Every path is absolute, ordered, and passed as a literal argument. |
 
-A credential-safe `agy 1.2.14 --conversation` probe resumed a known conversation with EOF and no new prompt. It emitted one `init` event, no `step_update` or `result` history events, no standard-error bytes, and exited successfully. This observed path does not establish the complete ordered replay required by ACP, so the adapter leaves `session/load` unregistered and unadvertised.
+A credential-safe `agy 1.2.14 --conversation` probe resumed a known conversation with EOF and no new prompt. It emitted one `init` event, no `step_update` or `result` history events, no standard-error bytes, and exited successfully. This establishes identity continuation without replay: the adapter implements `session/resume` and emits no history updates, while `session/load` remains unregistered and unadvertised until an upstream interface supplies the complete ordered user and agent message history.
 
 ### Unsupported for the first implementation
 
 - Authentication and provider methods
-- Session list, delete, fork, resume, modes, and configuration options
+- Session list, delete, fork, modes, and configuration options
 - HTTP and SSE MCP transports unless their capabilities are advertised
 - Client file, terminal, permission, and elicitation calls
 - Image, audio, and embedded resource prompt content
@@ -110,7 +111,7 @@ The current compatibility baseline is `agy 1.2.14`. The persistent adapter invoc
 agy --input-format stream-json --output-format stream-json
 ```
 
-Prompts are written only as stdin `user` events. The adapter does not pass `--print` or `--print-timeout`: print mode is for a single command-line prompt, and an upstream print timeout may return partial output as success. The adapter exclusively owns initialization and prompt deadlines. Internal process-generation resumption adds `--conversation <opaque-id>`, and additional directories add repeated `--add-dir <absolute-path>` arguments.
+Prompts are written only as stdin `user` events. The adapter does not pass `--print` or `--print-timeout`: print mode is for a single command-line prompt, and an upstream print timeout may return partial output as success. The adapter exclusively owns initialization and prompt deadlines. Internal process-generation continuity and ACP `session/resume` add `--conversation <opaque-id>`, and additional directories add repeated `--add-dir <absolute-path>` arguments.
 
 The adapter writes one user event per prompt:
 
@@ -159,6 +160,7 @@ Known events are accepted only in the session phase where they are valid.
 ## Session and process lifecycle
 
 - Each ACP session owns independent conversation metadata and an `agy` process lifecycle.
+- `session/resume` validates the requested identity and working directory through `agy --conversation`, or atomically reconfigures an existing idle session, without emitting prior-message updates.
 - A session permits at most one active prompt.
 - Different sessions may run concurrently.
 - Active and starting sessions count against one bounded admission limit.
@@ -233,18 +235,20 @@ Every listed row needs an automated test before the first release.
 | --- | --- |
 | ACP framing | Valid request and notification, malformed JSON, wrong `jsonrpc`, missing or invalid ID/method, embedded newline, oversized record, EOF remainder |
 | Dispatch | Baseline methods, unknown method, notification without response, stable `session/close`, unsupported optional methods |
-| Initialization | Compatible version, incompatible version, truthful capabilities, invalid capability input, init timeout, early exit |
+| Initialization | Compatible version, unsupported lower v1-shaped and higher canonical v2-shaped versions, truthful stable capabilities, invalid capability input, init timeout, early exit |
 | MCP | Empty list; one and many stdio servers; invalid command/args/env and duplicate names; lazy first-prompt startup; opaque project-name collision avoidance; concurrent environment isolation; cwd and additional-directory order; initial/launcher failure; success/cancel/timeout/close/disconnect cleanup; descendant cleanup; stale lease and cleanup retry; HTTP/SSE/ACP rejection; no persisted secret values |
 | Prompt input | Text, resource link, mixed ordering, empty prompt, unsupported block, invalid paths, strict invalid-list rejection |
 | Streaming | One delta, many deltas, split records, slow consumer, final suffix, no-delta final response, conflicting final response, response barrier |
 | `agy` ordering | Duplicate/late init, update before init, missing/mismatched conversation ID, update outside active turn, duplicate/late result |
 | Terminal outcomes | `SUCCESS`, `ERROR`, `CANCELED`, `INTERRUPTED`, `INVALID`, `WAITING`, `RUNNING`, unknown status, malformed `agy` JSON, oversized backend record, premature stdout EOF, non-zero exit, unknown event, exit while events are queued |
 | Cancellation | Session cancel, request cancel with `-32800`, timeout, cancel/result race, cancel/exit race, ignored graceful signal, hard-kill barrier |
-| Sessions | Capacity, concurrent sessions, duplicate prompt, idle restart, startup retirement, disconnect cleanup, unknown session |
-| Conditional surface | Complete ordered load-history replay, load failure/cancel, close idle/active/starting/duplicate, additional-directory ordering and validation |
+| Sessions | Capacity, concurrent sessions, duplicate prompt, idle restart, startup retirement, external and existing-session resume, resume identity/cwd rejection, resume concurrency, disconnect cleanup, unknown session |
+| Conditional surface | Resume without history, complete ordered load-history replay upstream gate, close idle/active/starting/duplicate, additional-directory ordering and validation |
 | Errors and redaction | Every fixed code/message, invalid params containing sensitive sentinel values, internal exception, stderr exclusion, no raw Pydantic errors |
 | Platforms | Linux process group, macOS process group |
 | Runtimes | Python 3.13 and Python 3.14 |
 | Compatibility kit | ACP Test Compatibility Kit plus adapter-specific regressions |
 
-The fake-`agy` end-to-end suite is the primary deterministic oracle. The ACP Test Compatibility Kit is supplementary and does not replace adapter-specific MCP, redaction, or lifecycle coverage. An opt-in real `agy` smoke test verifies event shape and a fixed response hash without printing sensitive values.
+The fake-`agy` end-to-end suite is the primary deterministic oracle. A supplementary Python 3.14 gate runs the official experimental [ACP TCK](https://github.com/agentclientprotocol/acp-tck) at commit `9b4334813bc4a3583285592027cc2f3ab85793bd`, version `0.2.0`, against vendored schema revision `6d08f412a7a1370d3cc9a124e3be3d6acf92641e`. Its JSON report must return exit code zero, a conformant verdict, no authentication or version blocker, the exact 56-entry pinned ID/tier registry with consistent verdict counts, all 21 mandatory requirements as `PASS`, and every requirement for advertised `session/resume`, `session/close`, and `additionalDirectories` capabilities as `PASS` rather than skipped. The report is retained as a CI artifact.
+
+The TCK is experimental, does not certify ACP conformance, and does not cover every MCP, terminal, filesystem, redaction, or process-lifecycle boundary. It therefore cannot replace project-specific regressions. An opt-in real `agy` smoke test separately verifies event shape and a fixed response hash without printing sensitive values.
