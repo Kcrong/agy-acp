@@ -116,6 +116,10 @@ def test_release_runbook_matches_pending_publisher_identity() -> None:
         "Protected branches only",
         "`Kcrong` as the sole release reviewer",
         "Prevent self-review** disabled",
+        (
+            "active repository tag ruleset targeting `refs/tags/v*` with tag updates "
+            "and deletions restricted and no bypass actors"
+        ),
         "unrestricted as `(Any)`",
         "publication trust boundary",
     ):

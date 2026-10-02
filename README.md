@@ -34,7 +34,7 @@ pipx run agy-acp --help
 Pin an exact release when reproducibility matters:
 
 ```bash
-pipx run --spec "agy-acp==0.1.0a2" agy-acp --help
+pipx run --spec "agy-acp==0.1.0" agy-acp --help
 ```
 
 If pipx selects an unsupported interpreter, pass an installed Python 3.13 or 3.14 executable with `--python`. A project virtual environment can instead use:
@@ -45,4 +45,4 @@ python -m pip install agy-acp
 
 ## Privacy and support
 
-The adapter adds no telemetry, network listener, or credential store. Prompts, responses, MCP configuration, and account access remain subject to the installed `agy` CLI and its configured services. Client-provided stdio MCP servers, `session/resume`, `session/close`, and ordered absolute `additionalDirectories` are supported. HTTP, SSE, and ACP MCP transports are unsupported, and `session/load` remains unavailable because `agy` does not provide complete ordered history replay.
+The adapter adds no telemetry, network listener, or credential store. Prompts, responses, MCP configuration, and account access remain subject to the installed `agy` CLI and its configured services. Treat the ACP client and its stdio MCP definitions as trusted local code: configured commands run as the current user and inherit the launch environment after adapter-reserved and Python import controls are removed. Client-provided stdio MCP servers, `session/resume`, `session/close`, and ordered absolute `additionalDirectories` are supported. HTTP, SSE, and ACP MCP transports are unsupported, and `session/load` remains unavailable because `agy` does not provide complete ordered history replay.

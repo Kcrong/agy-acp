@@ -15,6 +15,7 @@ PyPI releases use GitHub Actions Trusted Publishing. No PyPI token, username, pa
    - Under **Deployment branches and tags**, choose **Protected branches only**. The `main` protection ruleset must remain active.
    - Require `Kcrong` as the sole release reviewer.
    - Leave **Prevent self-review** disabled so the sole maintainer can approve a release they initiated.
+4. Create an active repository tag ruleset targeting `refs/tags/v*` with tag updates and deletions restricted and no bypass actors. A pushed release tag must be immutable through ordinary Git operations; correct a mistake with a new version instead of moving or deleting an existing tag.
 
 Do not leave the PyPI publisher environment unrestricted as `(Any)`. The single-maintainer approval model intentionally treats the `Kcrong` repository administrator account as the publication trust boundary; compromise or misuse of that account can authorize publication.
 
@@ -22,7 +23,7 @@ A pending publisher does not reserve the project name. The first successful trus
 
 ## Prepare a release
 
-1. Change only `[project].version` in `pyproject.toml` to the intended final or canonical PEP 440 prerelease version, such as `X.Y.Z` or `X.Y.ZaN`.
+1. Set `[project].version`, the README exact-version pipx example, and the Development Status classifier to the intended final or canonical PEP 440 release values.
 2. Run `uv lock` so the root package version in `uv.lock` matches.
 3. Run the complete local validation documented in `CONTRIBUTING.md`.
 4. Merge the reviewed change through a ready pull request after all four Linux/macOS and Python 3.13/3.14 checks pass.
