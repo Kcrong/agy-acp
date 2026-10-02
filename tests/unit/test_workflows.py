@@ -57,7 +57,7 @@ def test_publish_workflow_is_manual_validated_and_sha_pinned() -> None:
     workflow = load_workflow("publish.yml")
     assert set(workflow["on"]) == {"workflow_dispatch"}
     assert workflow["on"]["workflow_dispatch"]["inputs"]["release_tag"] == {
-        "description": "Existing vX.Y.Z tag on main to publish",
+        "description": "Existing vX.Y.Z or prerelease tag on main to publish",
         "required": True,
         "type": "string",
     }
@@ -90,6 +90,7 @@ def test_publish_workflow_is_manual_validated_and_sha_pinned() -> None:
     assert "UV_FROZEN" not in raw
     assert raw.count("run: uv lock --check") == 2
     assert "ref: refs/tags/${{ inputs.release_tag }}" in raw
+    assert "(?:(?:a|b|rc)" in raw
     assert 'git show-ref --verify --quiet "$tag_ref"' in raw
     assert 'git cat-file -t "$tag_ref"' in raw
     assert "WORKFLOW_REF: ${{ github.ref }}" in raw

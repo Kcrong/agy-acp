@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing vX.Y.Z tag on main to publish
+        description: Existing vX.Y.Z or prerelease tag on main to publish
         required: true
         type: string
 
@@ -31,7 +31,7 @@ jobs:
         run: >-
           python3 -c
           'import os, re, sys;
-          valid_tag = re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", os.environ["RELEASE_TAG"]);
+          valid_tag = re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:(?:a|b|rc)(?:0|[1-9][0-9]*))?", os.environ["RELEASE_TAG"]);
           sys.exit(0 if valid_tag and os.environ["WORKFLOW_REF"] == "refs/heads/main" else 1)'
 
       - name: Check out release tag

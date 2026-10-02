@@ -25,8 +25,8 @@ def test_member_path_accepts_normalized_archive_name() -> None:
 
 
 def test_distribution_files_selects_exact_archives(tmp_path: Path) -> None:
-    wheel = tmp_path / "agy_acp-0.1.0-py3-none-any.whl"
-    sdist = tmp_path / "agy_acp-0.1.0.tar.gz"
+    wheel = tmp_path / "example-1-py3-none-any.whl"
+    sdist = tmp_path / "example-1.tar.gz"
     wheel.touch()
     sdist.touch()
     (tmp_path / ".gitignore").write_text("*\n", encoding="utf-8")

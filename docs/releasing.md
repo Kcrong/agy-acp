@@ -22,17 +22,17 @@ A pending publisher does not reserve the project name. The first successful trus
 
 ## Prepare a release
 
-1. Change only `[project].version` in `pyproject.toml` to the intended `X.Y.Z` version.
+1. Change only `[project].version` in `pyproject.toml` to the intended final or canonical PEP 440 prerelease version, such as `X.Y.Z` or `X.Y.ZaN`.
 2. Run `uv lock` so the root package version in `uv.lock` matches.
 3. Run the complete local validation documented in `CONTRIBUTING.md`.
 4. Merge the reviewed change through a ready pull request after all four Linux/macOS and Python 3.13/3.14 checks pass.
-5. Create and push an annotated `vX.Y.Z` tag that points to the reviewed commit on `main`.
+5. Create and push an annotated `v<version>` tag that exactly matches the reviewed project version and points to its commit on `main`.
 
 Do not create a Windows job or support claim. Do not reuse a version or distribution filename that has reached PyPI; deletion does not make it reusable.
 
 ## Publish
 
-1. Manually run **Publish to PyPI** and enter the existing `vX.Y.Z` tag.
+1. Manually run **Publish to PyPI** and enter the existing `v<version>` tag.
 2. Wait for tag validation, the four-cell test matrix, the pinned experimental ACP TCK, one artifact build, Twine strict checking, and package smoke validation.
 3. Review the exact commit, version, artifact SHA-256 values, and downloaded `pypi-distributions` artifact.
 4. Approve the protected `pypi` environment only when those values are the intended immutable release.
@@ -44,7 +44,7 @@ The publish job downloads the already-validated artifact and authenticates to Py
 After publication, install the released version in a clean local virtual environment and verify:
 
 ```bash
-python -m pip install "agy-acp==X.Y.Z"
+python -m pip install "agy-acp==<version>"
 agy-acp --version
 agy-acp --help
 ```
