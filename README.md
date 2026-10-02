@@ -1,5 +1,7 @@
 # agy-acp
 
+[![CI status](https://github.com/Kcrong/agy-acp/actions/workflows/ci.yml/badge.svg)](https://github.com/Kcrong/agy-acp/actions/workflows/ci.yml) [![PyPI version](https://img.shields.io/pypi/v/agy-acp?include_prereleases)](https://pypi.org/project/agy-acp/) [![Python versions](https://img.shields.io/pypi/pyversions/agy-acp)](https://pypi.org/project/agy-acp/) [![License](https://img.shields.io/pypi/l/agy-acp)](./LICENSE)
+
 ## Purpose
 
 `agy-acp` is a security-focused ACP v1 adapter for the Antigravity CLI (`agy`). It exposes an authenticated local `agy` installation to ACP clients over standard input and output. The project passes a pinned revision of the experimental official ACP TCK, but that tool does not certify complete protocol coverage.
