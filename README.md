@@ -21,6 +21,8 @@ pipx install agy-acp
 agy-acp --version
 ```
 
+pipx downloads `agy-acp` into an isolated environment on first use. It does not install or authenticate the required `agy` backend.
+
 Configure the ACP client to launch `agy-acp`. Without a permanent app installation, configure it to launch `pipx run agy-acp`; verify resolution with:
 
 ```bash
