@@ -77,7 +77,18 @@ def test_readme_remains_concise_and_scope_limited() -> None:
         "## Installation",
         "## Privacy and support",
     ]
-    assert len(lines) <= 45
+    assert len(lines) <= 50
+
+
+def test_readme_documents_verified_pipx_flows() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "pipx install agy-acp" in readme
+    assert "pipx run agy-acp --help" in readme
+    expected_version = load_project()["project"]["version"]
+    assert f'pipx run --spec "agy-acp=={expected_version}" agy-acp --help' in readme
+    assert "Python 3.13 or 3.14 executable with `--python`" in readme
+    assert "It does not install or authenticate the required `agy` backend." in readme
+    assert "Until the first PyPI release" not in readme
 
 
 def test_sdist_public_file_allowlist_is_explicit() -> None:
