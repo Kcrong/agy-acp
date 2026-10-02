@@ -14,19 +14,26 @@ Windows is outside the current support scope.
 
 ## Installation
 
-Until the first PyPI release, install the current reviewed source from GitHub:
+For an isolated command-line installation, use [pipx](https://pipx.pypa.io/stable/):
 
 ```bash
-python -m pip install "git+https://github.com/Kcrong/agy-acp.git"
+pipx install agy-acp
+agy-acp --version
 ```
 
-A reproducible installation can pin a reviewed 40-character commit SHA:
+Configure the ACP client to launch `agy-acp`. Without a permanent app installation, configure it to launch `pipx run agy-acp`; verify resolution with:
 
 ```bash
-python -m pip install "git+https://github.com/Kcrong/agy-acp.git@<commit-sha>"
+pipx run agy-acp --help
 ```
 
-After a release is published on PyPI, install that release with:
+Pin an exact release when reproducibility matters:
+
+```bash
+pipx run --spec "agy-acp==0.1.0a2" agy-acp --help
+```
+
+If pipx selects an unsupported interpreter, pass an installed Python 3.13 or 3.14 executable with `--python`. A project virtual environment can instead use:
 
 ```bash
 python -m pip install agy-acp
