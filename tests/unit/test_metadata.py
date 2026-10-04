@@ -15,9 +15,11 @@ def load_project() -> dict[str, Any]:
         return tomllib.load(pyproject)
 
 
-def test_project_version_is_the_runtime_source() -> None:
-    expected = load_project()["project"]["version"]
-    assert expected == version("agy-acp") == __version__
+def test_project_version_is_derived_from_vcs() -> None:
+    project = load_project()["project"]
+    assert project["dynamic"] == ["version"]
+    assert "version" not in project
+    assert version("agy-acp") == __version__
 
 
 def test_supported_python_range_is_exact() -> None:
@@ -35,10 +37,18 @@ def test_console_entry_point_is_stable() -> None:
     assert project["scripts"] == {"agy-acp": "agy_acp.cli:main"}
 
 
-def test_build_backend_is_exact_and_available_without_isolation() -> None:
+def test_build_backend_and_vcs_version_source_are_exact() -> None:
     pyproject = load_project()
-    assert pyproject["build-system"]["requires"] == ["hatchling==1.32.4"]
+    assert pyproject["build-system"]["requires"] == [
+        "hatchling==1.32.4",
+        "hatch-vcs==0.5.0",
+    ]
     assert "hatchling==1.32.4" in pyproject["dependency-groups"]["dev"]
+    assert "hatch-vcs==0.5.0" in pyproject["dependency-groups"]["dev"]
+    assert pyproject["tool"]["hatch"]["version"] == {
+        "source": "vcs",
+        "tag-pattern": r"^v(?P<version>\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)$",
+    }
 
 
 def test_local_planning_files_are_ignored() -> None:
@@ -98,8 +108,7 @@ def test_readme_documents_verified_pipx_flows() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
     assert "pipx install agy-acp" in readme
     assert "pipx run agy-acp --help" in readme
-    expected_version = load_project()["project"]["version"]
-    assert f'pipx run --spec "agy-acp=={expected_version}" agy-acp --help' in readme
+    assert 'pipx run --spec "agy-acp==X.Y.Z" agy-acp --help' in readme
     assert "Python 3.13 or 3.14 executable with `--python`" in readme
     assert "It does not install or authenticate the required `agy` backend." in readme
     assert "Until the first PyPI release" not in readme

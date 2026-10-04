@@ -7,6 +7,7 @@ import pytest
 
 from scripts.package_smoke import (
     _distribution_files,
+    _distribution_version,
     _member_path,
     _run,
     _safe_environment,
@@ -32,6 +33,29 @@ def test_distribution_files_selects_exact_archives(tmp_path: Path) -> None:
     (tmp_path / ".gitignore").write_text("*\n", encoding="utf-8")
 
     assert _distribution_files(tmp_path) == (wheel, sdist)
+
+
+def test_distribution_version_matches_wheel_and_sdist() -> None:
+    wheel = Path("agy_acp-1.2.3-py3-none-any.whl")
+    sdist = Path("agy_acp-1.2.3.tar.gz")
+
+    assert _distribution_version(wheel, sdist) == "1.2.3"
+
+
+@pytest.mark.parametrize(
+    ("wheel", "sdist"),
+    [
+        ("other-1.2.3-py3-none-any.whl", "agy_acp-1.2.3.tar.gz"),
+        ("agy_acp-1.2.3-py3-none-any.whl", "other-1.2.3.tar.gz"),
+        ("agy_acp-1.2.3-py3-none-any.whl", "agy_acp-1.2.4.tar.gz"),
+    ],
+)
+def test_distribution_version_rejects_invalid_or_mismatched_names(
+    wheel: str,
+    sdist: str,
+) -> None:
+    with pytest.raises(RuntimeError):
+        _distribution_version(Path(wheel), Path(sdist))
 
 
 def test_distribution_files_rejects_duplicates(tmp_path: Path) -> None:

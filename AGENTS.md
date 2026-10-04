@@ -10,6 +10,7 @@ This document applies to all implementation and modification work within the `ag
 - Merge changes only through a pull request after review and required verification.
 - Keep a pull request in draft while pushing work-in-progress revisions; mark it ready for review only when the full CI matrix should run.
 - A new revision on an already-ready pull request reruns the required checks; return it to draft before iterative pushes that should not allocate runners.
+- Give every pull request a Conventional Commit title; squash merging uses that title, with the PR number appended, as the `main` commit and release-version input.
 - Address review findings and complete the relevant checks before merging.
 
 ## 2. Maintainer Ownership and Explanations
@@ -36,7 +37,8 @@ This document applies to all implementation and modification work within the `ag
 - Do not claim Windows support or add Windows GitHub Actions jobs unless the platform requirements are intentionally revised through a reviewed change.
 - Support the two newest stable Python 3 feature releases (`3.N` and `3.(N-1)`) on every supported operating system.
 - Run GitHub Actions only on standard GitHub-hosted Ubuntu and macOS runners.
-- Run the test workflow only for pull requests that are ready for review; draft pushes and `main` pushes must not allocate test jobs.
+- Run the test workflow for pull requests that are ready for review and for every push to `main`; draft pull request revisions must not allocate test jobs.
+- Start automatic release tagging and PyPI publication only after the corresponding `main` test workflow succeeds.
 - Protect `main` so its current pull-request head must pass all four Ubuntu/macOS and Python 3.13/3.14 checks before merge.
 - Standard runners are free for public repositories, but workflows must remain within GitHub's job-duration, concurrency, and storage limits.
 - Do not use larger runners unless the platform requirements are intentionally revised through a reviewed change.
@@ -59,6 +61,14 @@ This document applies to all implementation and modification work within the `ag
 ## 7. Pull Request Title and Body
 
 - Write concise pull request titles and bodies in English.
+- Every pull request title must follow Conventional Commits:
+
+```text
+<type>(<optional-scope>)!: <description>
+```
+
+- Allowed title types are `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, and `test`.
+- A `feat` title creates a minor bump, `!` creates a major bump, and every other allowed type creates a patch bump after the merge reaches a successful `main` CI run.
 - Focus on the change and its purpose, adding background only when needed to understand the decision.
 - Use these sections in order:
 
@@ -93,3 +103,10 @@ This document applies to all implementation and modification work within the `ag
 - Standard types include `feat`, `fix`, `test`, `refactor`, `docs`, `chore`, `ci`, `build`, and `perf`.
 - Keep each commit to one logical change.
 - Example: `feat(acp): add agy process bridge`
+
+## 10. Automated Releases
+
+- Derive package versions from immutable annotated `v<version>` Git tags; do not maintain a separate static package version.
+- Let the SHA-pinned Conventional Commit tagging Action create release tags after successful `main` CI; do not create, move, or delete release tags manually.
+- Build release distributions from the exact tagged commit and publish only those validated artefacts through PyPI Trusted Publishing.
+- Keep the protected `pypi` environment and its required approval as the final irreversible publication gate.

@@ -13,7 +13,6 @@ import sys
 import tempfile
 import threading
 import time
-import tomllib
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, BinaryIO, ClassVar
@@ -41,18 +40,6 @@ def build_requirement(repository: str, revision: str) -> str:
     if _REVISION.fullmatch(revision) is None:
         raise ValueError("invalid exact Git revision")
     return f"git+{repository}@{revision}"
-
-
-def _project_version() -> str:
-    pyproject_path = Path(__file__).parents[1] / "pyproject.toml"
-    with pyproject_path.open("rb") as stream:
-        project = tomllib.load(stream).get("project")
-    if not isinstance(project, dict):
-        raise RuntimeError("Project metadata is missing")
-    value = project.get("version")
-    if not isinstance(value, str) or not value:
-        raise RuntimeError("Project version is invalid")
-    return value
 
 
 def _scratch_root() -> Path:
@@ -332,7 +319,6 @@ def _run(
 
 def run_smoke(repository: str, revision: str) -> None:
     requirement = build_requirement(repository, revision)
-    expected_version = _project_version()
     with tempfile.TemporaryDirectory(
         prefix="agy-acp-git-install-",
         dir=_scratch_root(),
@@ -365,15 +351,19 @@ def run_smoke(repository: str, revision: str) -> None:
             [
                 str(python),
                 "-c",
-                "import agy_acp; print(agy_acp.__version__)",
+                (
+                    "import agy_acp; from importlib.metadata import version; "
+                    "assert agy_acp.__version__ == version('agy-acp'); "
+                    "print(agy_acp.__version__)"
+                ),
             ],
             root=root,
         )
-        if imported_version != expected_version:
-            raise RuntimeError("Package import returned an unexpected version")
+        if not imported_version:
+            raise RuntimeError("Package import returned an empty version")
         executable = _console_script(environment)
         if _run("Console version", [str(executable), "--version"], root=root) != (
-            f"agy-acp {expected_version}"
+            f"agy-acp {imported_version}"
         ):
             raise RuntimeError("Console script returned an unexpected version")
         help_text = _run("Console help", [str(executable), "--help"], root=root)

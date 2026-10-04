@@ -34,7 +34,7 @@ pipx run agy-acp --help
 Pin an exact release when reproducibility matters:
 
 ```bash
-pipx run --spec "agy-acp==0.1.0" agy-acp --help
+pipx run --spec "agy-acp==X.Y.Z" agy-acp --help
 ```
 
 If pipx selects an unsupported interpreter, pass an installed Python 3.13 or 3.14 executable with `--python`. A project virtual environment can instead use:

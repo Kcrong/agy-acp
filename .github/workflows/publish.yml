@@ -1,12 +1,11 @@
 name: Publish to PyPI
 
 on:
-  workflow_dispatch:
-    inputs:
-      release_tag:
-        description: Existing vX.Y.Z or prerelease tag on main to publish
-        required: true
-        type: string
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
 
 permissions:
   contents: read
@@ -14,145 +13,248 @@ permissions:
 concurrency:
   group: publish-pypi
   cancel-in-progress: false
+  # GitHub supports this queue; actionlint 1.7.12 has not yet added its schema entry.
+  queue: max
 
 jobs:
-  validate:
-    name: Validate release tag
+  tag:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      }}
+    name: Create release tag
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
-      WORKFLOW_REF: ${{ github.ref }}
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: read
     outputs:
       commit: ${{ steps.release.outputs.commit }}
+      tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
     steps:
-      - name: Validate input shape
-        run: >-
-          python3 -c
-          'import os, re, sys;
-          valid_tag = re.fullmatch(r"v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:(?:a|b|rc)(?:0|[1-9][0-9]*))?", os.environ["RELEASE_TAG"]);
-          sys.exit(0 if valid_tag and os.environ["WORKFLOW_REF"] == "refs/heads/main" else 1)'
+      - name: Check out validated commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+          ref: ${{ github.event.workflow_run.head_sha }}
 
+      - name: Validate tested main commit
+        id: candidate
+        env:
+          RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$RELEASE_COMMIT" origin/main
+          echo 'eligible=true' >> "$GITHUB_OUTPUT"
+
+      - name: Select release tag baseline
+        if: ${{ steps.candidate.outputs.eligible == 'true' }}
+        id: tags
+        env:
+          RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t current_tags < <(
+            git tag --points-at HEAD --list 'v*' --sort=-v:refname |
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true
+          )
+          test "${#current_tags[@]}" -le 1
+          existing_tag="${current_tags[0]:-}"
+          latest_tag="$(
+            git tag --list 'v*' --sort=-v:refname |
+              grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' |
+              head -n 1
+          )"
+          test -n "$latest_tag"
+          latest_commit="$(git rev-parse "$latest_tag^{commit}")"
+
+          if test "$latest_commit" != "$RELEASE_COMMIT" && \
+            git merge-base --is-ancestor "$RELEASE_COMMIT" "$latest_commit"; then
+            echo 'releasable=false' >> "$GITHUB_OUTPUT"
+            echo '::notice::Commit is already included in a newer release tag.'
+            exit 0
+          fi
+
+          if test -n "$existing_tag"; then
+            previous_tag=''
+            while IFS= read -r tag; do
+              tag_commit="$(git rev-parse "$tag^{commit}")"
+              if test "$tag_commit" != "$RELEASE_COMMIT" && \
+                git merge-base --is-ancestor "$tag_commit" "$RELEASE_COMMIT"; then
+                previous_tag="$tag"
+                break
+              fi
+            done < <(
+              git tag --list 'v*' --sort=-v:refname |
+                grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$'
+            )
+          else
+            git merge-base --is-ancestor "$latest_commit" "$RELEASE_COMMIT"
+            previous_tag="$latest_tag"
+          fi
+          test -n "$previous_tag"
+
+          echo 'releasable=true' >> "$GITHUB_OUTPUT"
+          printf 'existing_tag=%s\n' "$existing_tag" >> "$GITHUB_OUTPUT"
+          printf 'previous_tag=%s\n' "$previous_tag" >> "$GITHUB_OUTPUT"
+          printf 'previous_version=%s\n' "${previous_tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate merged PR titles
+        if: ${{ steps.tags.outputs.releasable == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PREVIOUS_TAG: ${{ steps.tags.outputs.previous_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t commits < <(git rev-list --reverse "$PREVIOUS_TAG^{commit}..HEAD")
+          test "${#commits[@]}" -gt 0
+          test "${#commits[@]}" -le 100
+          for commit in "${commits[@]}"; do
+            payload="$RUNNER_TEMP/associated-prs-$commit.json"
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/commits/$commit/pulls" > "$payload"
+            COMMIT_SHA="$commit" \
+            COMMIT_TITLE="$(git show -s --format=%s "$commit")" \
+            PAYLOAD_PATH="$payload" \
+              python3 <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          commit = os.environ["COMMIT_SHA"]
+          title = os.environ["COMMIT_TITLE"]
+          pull_requests = json.loads(Path(os.environ["PAYLOAD_PATH"]).read_text())
+          matches = [
+              pull_request
+              for pull_request in pull_requests
+              if pull_request.get("merged_at")
+              and pull_request.get("merge_commit_sha") == commit
+              and pull_request.get("base", {}).get("ref") == "main"
+          ]
+          pattern = re.compile(
+              r"(?:build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)"
+              r"(?:\([^)]+\))?!?: .+"
+          )
+          if len(matches) != 1:
+              raise SystemExit("release commit is not associated with exactly one merged PR")
+          pull_request = matches[0]
+          expected_subject = f"{pull_request.get('title')} (#{pull_request.get('number')})"
+          if title != expected_subject or not pattern.fullmatch(title):
+              raise SystemExit("release commit subject does not match its validated PR title")
+          PY
+          done
+
+      - name: Calculate expected Conventional Commit tag
+        if: ${{ steps.tags.outputs.releasable == 'true' }}
+        id: expected
+        uses: mathieudutour/github-tag-action@af99e60ce8132224b8e6ebab5023449fe256ed46 # v7.0.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          commit_sha: ${{ github.event.workflow_run.head_sha }}
+          ref: main
+          release_branches: main
+          create_annotated_tag: true
+          previous_tag: ${{ steps.tags.outputs.previous_tag }}
+          previous_version: ${{ steps.tags.outputs.previous_version }}
+          default_bump: false
+          ignore_keywords: ""
+          custom_release_rules: "build:patch:Build System,chore:patch:Maintenance,ci:patch:Continuous Integration,docs:patch:Documentation,feat:minor:Features,fix:patch:Bug Fixes,perf:patch:Performance,refactor:patch:Code Refactoring,revert:patch:Reverts,style:patch:Styles,test:patch:Tests"
+          dry_run: true
+
+      - name: Create expected Conventional Commit tag
+        if: ${{ steps.tags.outputs.releasable == 'true' && steps.tags.outputs.existing_tag == '' }}
+        id: tag
+        uses: mathieudutour/github-tag-action@af99e60ce8132224b8e6ebab5023449fe256ed46 # v7.0.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          commit_sha: ${{ github.event.workflow_run.head_sha }}
+          ref: main
+          release_branches: main
+          create_annotated_tag: true
+          previous_tag: ${{ steps.tags.outputs.previous_tag }}
+          previous_version: ${{ steps.tags.outputs.previous_version }}
+          default_bump: false
+          ignore_keywords: ""
+          custom_release_rules: "build:patch:Build System,chore:patch:Maintenance,ci:patch:Continuous Integration,docs:patch:Documentation,feat:minor:Features,fix:patch:Bug Fixes,perf:patch:Performance,refactor:patch:Code Refactoring,revert:patch:Reverts,style:patch:Styles,test:patch:Tests"
+
+      - name: Resolve release identity
+        if: ${{ steps.tags.outputs.releasable == 'true' }}
+        id: release
+        env:
+          CREATED_TAG: ${{ steps.tag.outputs.new_tag }}
+          CREATED_VERSION: ${{ steps.tag.outputs.new_version }}
+          EXISTING_TAG: ${{ steps.tags.outputs.existing_tag }}
+          EXPECTED_TAG: ${{ steps.expected.outputs.new_tag }}
+          EXPECTED_VERSION: ${{ steps.expected.outputs.new_version }}
+          RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${EXISTING_TAG:-$CREATED_TAG}"
+          version="${EXPECTED_VERSION}"
+          test -n "$EXPECTED_TAG"
+          test -n "$version"
+          test "$EXPECTED_TAG" = "v$version"
+          test "$tag" = "$EXPECTED_TAG"
+          if test -n "$CREATED_VERSION"; then
+            test "$CREATED_VERSION" = "$version"
+          fi
+          git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+          tag_ref="refs/tags/$tag"
+          test "$(git cat-file -t "$tag_ref")" = "tag"
+          test "$(git rev-parse "$tag_ref^{commit}")" = "$RELEASE_COMMIT"
+          printf 'commit=%s\n' "$RELEASE_COMMIT" >> "$GITHUB_OUTPUT"
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Release $tag"
+            echo
+            echo "Commit: \`$RELEASE_COMMIT\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    if: ${{ needs.tag.outputs.tag != '' }}
+    name: Build release distributions
+    needs: tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RELEASE_COMMIT: ${{ needs.tag.outputs.commit }}
+      RELEASE_TAG: ${{ needs.tag.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.tag.outputs.version }}
+      UV_PYTHON: "3.14"
+    steps:
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
-          ref: refs/tags/${{ inputs.release_tag }}
+          ref: refs/tags/${{ needs.tag.outputs.tag }}
 
-      - name: Validate tag, metadata, and main ancestry
-        id: release
+      - name: Validate tag identity
         shell: bash
         run: |
           set -euo pipefail
-          version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-          test "$RELEASE_TAG" = "v$version"
           tag_ref="refs/tags/$RELEASE_TAG"
+          test "$RELEASE_TAG" = "v$RELEASE_VERSION"
           git show-ref --verify --quiet "$tag_ref"
           test "$(git cat-file -t "$tag_ref")" = "tag"
-          test "$(git rev-parse "$tag_ref^{commit}")" = "$(git rev-parse HEAD)"
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          git merge-base --is-ancestor HEAD origin/main
-          lock_version="$(python3 -c 'import tomllib; data=tomllib.load(open("uv.lock", "rb")); print(next(item["version"] for item in data["package"] if item["name"] == "agy-acp"))')"
-          test "$version" = "$lock_version"
-          printf 'commit=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
-
-  test:
-    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
-    needs: validate
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    env:
-      UV_PYTHON: ${{ matrix.python-version }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-        python-version:
-          - "3.13"
-          - "3.14"
-    steps:
-      - name: Check out validated commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ needs.validate.outputs.commit }}
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          version: "0.12.21"
-          python-version: ${{ matrix.python-version }}
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-
-      - name: Verify lock consistency
-        run: uv lock --check
-
-      - name: Install locked dependencies
-        run: uv sync --frozen --all-groups --python "${{ matrix.python-version }}"
-
-      - name: Check formatting
-        run: uv run --frozen ruff format --check .
-
-      - name: Lint
-        run: uv run --frozen ruff check .
-
-      - name: Type check
-        run: uv run --frozen mypy
-
-      - name: Test
-        run: uv run --frozen pytest
-
-      - name: Stress Darwin MCP cleanup
-        if: ${{ matrix.os == 'macos-latest' && matrix.python-version == '3.13' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for iteration in {1..20}; do
-            uv run --frozen pytest -q \
-              tests/integration/test_mcp_handoff.py::test_multiple_mcp_servers_and_concurrent_sessions_are_isolated
-          done
-
-      - name: Run pinned experimental ACP TCK
-        if: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14' }}
-        run: >-
-          uv run --frozen --group tck python scripts/tck_smoke.py
-          --report-json "$RUNNER_TEMP/acp-tck-report.json"
-
-      - name: Upload release ACP TCK report
-        if: ${{ always() && matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: release-acp-tck-report
-          path: ${{ runner.temp }}/acp-tck-report.json
-          if-no-files-found: ignore
-          retention-days: 7
-
-  build:
-    name: Build release distributions
-    needs:
-      - validate
-      - test
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    env:
-      UV_PYTHON: "3.14"
-    steps:
-      - name: Check out validated commit
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ needs.validate.outputs.commit }}
+          test "$(git rev-parse "$tag_ref^{commit}")" = "$RELEASE_COMMIT"
+          test "$(git rev-parse HEAD)" = "$RELEASE_COMMIT"
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -173,8 +275,15 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --frozen --all-groups --python 3.14
 
-      - name: Build once
+      - name: Build once from the release tag
         run: uv build --no-build-isolation --out-dir "$RUNNER_TEMP/dist"
+
+      - name: Verify tag-derived filenames
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/dist/agy_acp-$RELEASE_VERSION-py3-none-any.whl"
+          test -f "$RUNNER_TEMP/dist/agy_acp-$RELEASE_VERSION.tar.gz"
 
       - name: Check distribution metadata
         run: uv run --frozen twine check --strict "$RUNNER_TEMP"/dist/*
@@ -207,13 +316,13 @@ jobs:
   publish:
     name: Publish validated distributions
     needs:
-      - validate
+      - tag
       - build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
       name: pypi
-      url: https://pypi.org/project/agy-acp/${{ needs.validate.outputs.version }}/
+      url: https://pypi.org/project/agy-acp/${{ needs.tag.outputs.version }}/
     permissions:
       id-token: write
     steps:
