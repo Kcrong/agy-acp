@@ -5,7 +5,7 @@ PyPI releases use GitHub Actions Trusted Publishing. No PyPI token, username, pa
 ## One-time configuration
 
 1. Verify the publishing PyPI account email and enable two-factor authentication.
-2. Create a pending GitHub publisher on PyPI with these exact values:
+2. On the existing `agy-acp` PyPI project, add or verify a GitHub Trusted Publisher with these exact values:
    - PyPI project name: `agy-acp`
    - Owner: `Kcrong`
    - Repository name: `agy-acp`
@@ -40,10 +40,11 @@ Package metadata is derived from the immutable `v<version>` tag through Hatch VC
 5. For every commit after that preceding tag, the workflow queries the associated merged PR and requires the commit subject to equal the validated PR title with its `(#number)` suffix.
 6. The SHA-pinned Conventional Commit tagging Action calculates the highest required SemVer bump across those commits and creates an annotated `v<version>` tag on the validated commit.
 7. The workflow checks out that exact tag, verifies the tag object and commit identity, builds once, runs Twine and package smoke validation, records SHA-256 hashes, and uploads the immutable `pypi-distributions` artifact.
-8. The publish job enters the protected `pypi` environment. Review the tag, commit, version, artifact hashes, and CI result, then approve the deployment.
-9. PyPI Trusted Publishing exchanges the GitHub OIDC identity and uploads the already-validated artifact without rebuilding it.
+8. Before requesting environment approval, the workflow queries PyPI for the release and compares every published filename and SHA-256 with the validated distributions. A complete matching release exits successfully, a partial matching release proceeds with only the missing files, and any hash mismatch or unexpected file stops the release.
+9. When files remain, the publish job enters the protected `pypi` environment. Review the tag, commit, version, artifact hashes, and CI result, then approve the deployment.
+10. The publish job repeats the PyPI comparison after approval, then PyPI Trusted Publishing uploads only the still-missing validated files without rebuilding them. Duplicate tolerance remains disabled so a conflicting filename cannot be hidden.
 
-The workflow allows one active release at a time and uses `queue: max` to retain up to 100 waiting runs instead of replacing an older pending run. A retry recomputes the expected version from the preceding tag before it may reuse an existing tag. Main CI concurrency is isolated by commit SHA, so rerunning historical CI cannot cancel validation for a newer commit. If `main` advances while a tested commit is releasing, that release remains valid; the later successful run starts from its tag and releases the subsequent commits. If the later commit is tagged first, ancestry detection makes the older run exit without creating a backward tag.
+The workflow allows one active release at a time and uses `queue: max` to retain up to 100 waiting runs instead of replacing an older pending run. A retry recomputes the expected version from the preceding tag before it may reuse an existing tag, and verifies PyPI state by filename and SHA-256 before any upload. This makes fully published retries no-ops and allows a matching partial upload to resume safely. Main CI concurrency is isolated by commit SHA, so rerunning historical CI cannot cancel validation for a newer commit. If `main` advances while a tested commit is releasing, that release remains valid; the later successful run starts from its tag and releases the subsequent commits. If the later commit is tagged first, ancestry detection makes the older run exit without creating a backward tag.
 
 Do not create a Windows job or support claim. Standard GitHub-hosted Ubuntu and macOS runners remain the only release validation platforms.
 

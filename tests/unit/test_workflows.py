@@ -113,10 +113,14 @@ def test_publish_workflow_is_ci_gated_automatic_and_sha_pinned() -> None:
     ):
         assert expected in condition
     assert workflow["jobs"]["build"]["needs"] == "tag"
+    prepare = workflow["jobs"]["prepare-publish"]
+    assert set(prepare["needs"]) == {"tag", "build"}
+    assert prepare["outputs"] == {"publish-needed": "${{ steps.plan.outputs.publish-needed }}"}
     publish = workflow["jobs"]["publish"]
     assert publish["environment"]["name"] == "pypi"
-    assert publish["permissions"] == {"id-token": "write"}
-    assert set(publish["needs"]) == {"tag", "build"}
+    assert publish["permissions"] == {"contents": "read", "id-token": "write"}
+    assert set(publish["needs"]) == {"tag", "build", "prepare-publish"}
+    assert publish["if"] == "${{ needs.prepare-publish.outputs.publish-needed == 'true' }}"
 
     references = action_references(workflow)
     assert references
@@ -157,6 +161,10 @@ def test_publish_workflow_is_ci_gated_automatic_and_sha_pinned() -> None:
     assert "if: ${{ needs.tag.outputs.tag != '' }}" in raw
     assert "refs/tags/${{ needs.tag.outputs.tag }}" in raw
     assert "Build once from the release tag" in raw
+    assert raw.count("python -m scripts.prepare_pypi_publish") == 2
+    assert "needs.prepare-publish.outputs.publish-needed == 'true'" in raw
+    assert "steps.plan.outputs.publish-needed == 'true'" in raw
+    assert "skip-existing: false" in raw
     assert raw.count("id-token: write") == 1
     assert "password:" not in raw
     assert "user:" not in raw

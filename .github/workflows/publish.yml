@@ -313,26 +313,89 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  prepare-publish:
+    name: Check PyPI publication state
+    needs:
+      - tag
+      - build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      publish-needed: ${{ steps.plan.outputs.publish-needed }}
+    env:
+      RELEASE_TAG: ${{ needs.tag.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.tag.outputs.version }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.tag.outputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Download validated distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pypi-distributions
+          path: validated-dist
+
+      - name: Plan PyPI publication
+        id: plan
+        run: >-
+          python -m scripts.prepare_pypi_publish
+          --version "$RELEASE_VERSION"
+          --dist-dir validated-dist
+          --output-dir "$RUNNER_TEMP/pending-dist"
+
   publish:
+    if: ${{ needs.prepare-publish.outputs.publish-needed == 'true' }}
     name: Publish validated distributions
     needs:
       - tag
       - build
+      - prepare-publish
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
       name: pypi
       url: https://pypi.org/project/agy-acp/${{ needs.tag.outputs.version }}/
     permissions:
+      contents: read
       id-token: write
+    env:
+      RELEASE_VERSION: ${{ needs.tag.outputs.version }}
     steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.tag.outputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
       - name: Download validated distributions
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: pypi-distributions
-          path: dist
+          path: validated-dist
 
-      - name: Publish with PyPI Trusted Publishing
+      - name: Recheck PyPI publication state
+        id: plan
+        run: >-
+          python -m scripts.prepare_pypi_publish
+          --version "$RELEASE_VERSION"
+          --dist-dir validated-dist
+          --output-dir dist
+
+      - name: Publish verified missing distributions
+        if: ${{ steps.plan.outputs.publish-needed == 'true' }}
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: dist
