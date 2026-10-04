@@ -32,9 +32,9 @@ pipx install agy-acp
 agy-acp --version
 ```
 
-Upgrade an existing installation with `pipx upgrade agy-acp`. pipx downloads `agy-acp` into an isolated environment on first use. It does not install or authenticate the required `agy` backend.
+Upgrade an existing installation with `pipx upgrade agy-acp`. `pipx install` creates the isolated environment during installation. It does not install or authenticate the required `agy` backend.
 
-Without a permanent installation, run the package on demand:
+Without a permanent installation, `pipx run` creates and caches a temporary environment on first use:
 
 ```bash
 pipx run agy-acp --help
@@ -89,7 +89,7 @@ To let pipx provide the adapter without a permanent installation, use:
 }
 ```
 
-Place the object under the agent entry required by the client, then restart or reconnect the client. Ensure its launch environment can resolve both `agy-acp` (or `pipx`) and `agy` on `PATH`. The client supplies an absolute working directory when creating or resuming a session.
+Place the object under the agent entry required by the client, then restart or reconnect the client. Ensure its launch environment can resolve both `agy-acp` (or `pipx`) and `agy` on `PATH`. The client supplies an existing absolute working directory when creating or resuming a session.
 
 ## Options
 
@@ -109,12 +109,12 @@ Compatible ACP clients receive these model and reasoning effort selectors and se
 | Option or field | Behavior |
 | --- | --- |
 | `model` | Offers `default`, followed by the account-specific models returned by `agy models`. |
-| `effort` | Offers only `default` while `agy` controls the model; after a concrete model is selected, offers only discovered sibling effort variants in that model family. |
-| `cwd` | Required absolute working directory for a new or resumed session. |
+| `effort` | Offers `default` for the agy-selected model and unsuffixed concrete models. For models ending in `-low`, `-medium`, `-high`, or `-max`, it offers the discovered sibling variants from that family. |
+| `cwd` | Required existing absolute directory for a new or resumed session. |
 | `additionalDirectories` | Optional ordered absolute directories passed to `agy` as literal arguments. |
-| `mcpServers` | Optional client-provided stdio MCP server definitions with command, arguments, and environment values. |
+| `mcpServers` | `session/new` requires a list (use `[]` when none); `session/resume` may omit it. Entries define stdio MCP servers with command, arguments, and environment values. |
 
-Model and effort changes apply from the next prompt. Returning `model` to `default` also resets `effort` to `default`. Restarting the adapter refreshes the cached model catalog.
+Model and effort changes apply from the next prompt. An unsuffixed concrete model keeps `effort` at `default`. Returning `model` to `default` also resets `effort` to `default`. Restarting the adapter refreshes the cached model catalog.
 
 ## Supported ACP behavior
 

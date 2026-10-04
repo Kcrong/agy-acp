@@ -115,20 +115,64 @@ def test_readme_documents_verified_install_and_run_flows() -> None:
     assert "pipx run agy-acp --help" in readme
     assert 'pipx run --spec "agy-acp==X.Y.Z" agy-acp --help' in readme
     assert "Python 3.13 or 3.14 executable with `--python`" in readme
+    assert "`pipx install` creates the isolated environment during installation" in readme
+    assert "`pipx run` creates and caches a temporary environment on first use" in readme
     assert "It does not install or authenticate the required `agy` backend." in readme
     assert "agy --version" in readme
     assert "agy models" in readme
-    assert '"command": "agy-acp"' in readme
-    assert '"command": "pipx"' in readme
-    assert "`-h`, `--help`" in readme
-    assert "`--version`" in readme
+    assert "Until the first PyPI release" not in readme
+
+
+def test_readme_client_command_examples_are_exact() -> None:
+    import json
+    import re
+
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```json\n(.*?)\n```", readme, flags=re.DOTALL)
+    assert [json.loads(block) for block in blocks] == [
+        {"command": "agy-acp", "args": []},
+        {"command": "pipx", "args": ["run", "agy-acp"]},
+    ]
+
+
+def test_readme_public_cli_matches_generated_help() -> None:
+    from agy_acp.cli import build_parser
+
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+    help_text = build_parser().format_help()
+    assert "usage: agy-acp [-h] [--version]" in help_text
+    assert "-h, --help" in help_text
+    assert "--version" in help_text
+    for hidden_option in (
+        "--agy-path",
+        "--prompt-timeout",
+        "--max-line-bytes",
+        "--max-in-flight",
+    ):
+        assert hidden_option not in help_text
+    assert "| `-h`, `--help` | Show command usage and exit. |" in readme
+    assert "| `--version` | Print the installed `agy-acp` version and exit. |" in readme
     assert "no `--model` or `--effort` flags" in readme
+
+
+def test_readme_documents_exact_session_and_support_contract() -> None:
+    readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
     assert "models returned by `agy models`" in readme
     assert "reasoning effort" in readme
-    assert "changes apply from the next prompt" in readme
+    assert "Offers `default` for the agy-selected model and unsuffixed concrete models" in readme
+    assert "An unsuffixed concrete model keeps `effort` at `default`." in readme
+    assert (
+        "| `cwd` | Required existing absolute directory for a new or resumed session. |" in readme
+    )
+    assert "`session/new` requires a list (use `[]` when none)" in readme
+    assert "`session/resume` may omit it" in readme
+    assert "Model and effort changes apply from the next prompt" in readme
     assert "Restarting the adapter refreshes" in readme
+    assert "Create, prompt, cancel, resume, and close independent sessions" in readme
+    assert "`session/load`, HTTP/SSE/ACP MCP transports" in readme
     assert "not an interactive prompt" in readme
-    assert "Until the first PyPI release" not in readme
+    assert "The adapter adds no telemetry, network listener, or credential store" in readme
+    assert "The installed `agy` process is also inside the trusted boundary" in readme
 
 
 def test_sdist_public_file_allowlist_is_explicit() -> None:
