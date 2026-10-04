@@ -93,27 +93,41 @@ def test_readme_badges_are_dynamic_and_scoped() -> None:
     assert "](./LICENSE)" in readme
 
 
-def test_readme_remains_concise_and_scope_limited() -> None:
+def test_readme_documents_usage_and_remains_scope_limited() -> None:
     lines = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8").splitlines()
     assert [line for line in lines if line.startswith("## ")] == [
         "## Purpose",
         "## Requirements",
         "## Installation",
+        "## Run the adapter",
+        "## Configure an ACP client",
+        "## Options",
+        "## Supported ACP behavior",
+        "## Troubleshooting",
         "## Privacy and support",
     ]
-    assert len(lines) <= 50
+    assert len(lines) <= 170
 
 
-def test_readme_documents_verified_pipx_flows() -> None:
+def test_readme_documents_verified_install_and_run_flows() -> None:
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
     assert "pipx install agy-acp" in readme
     assert "pipx run agy-acp --help" in readme
     assert 'pipx run --spec "agy-acp==X.Y.Z" agy-acp --help' in readme
     assert "Python 3.13 or 3.14 executable with `--python`" in readme
     assert "It does not install or authenticate the required `agy` backend." in readme
+    assert "agy --version" in readme
+    assert "agy models" in readme
+    assert '"command": "agy-acp"' in readme
+    assert '"command": "pipx"' in readme
+    assert "`-h`, `--help`" in readme
+    assert "`--version`" in readme
+    assert "no `--model` or `--effort` flags" in readme
     assert "models returned by `agy models`" in readme
     assert "reasoning effort" in readme
-    assert "restarting the adapter refreshes" in readme
+    assert "changes apply from the next prompt" in readme
+    assert "Restarting the adapter refreshes" in readme
+    assert "not an interactive prompt" in readme
     assert "Until the first PyPI release" not in readme
 
 
