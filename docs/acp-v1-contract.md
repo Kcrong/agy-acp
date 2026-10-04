@@ -60,10 +60,21 @@ The following surface is advertised only after its success, rejection, cancellat
 
 A credential-safe `agy 1.2.14 --conversation` probe resumed a known conversation with EOF and no new prompt. It emitted one `init` event, no `step_update` or `result` history events, no standard-error bytes, and exited successfully. This establishes identity continuation without replay: the adapter implements `session/resume` and emits no history updates, while `session/load` remains unregistered and unadvertised until an upstream interface supplies the complete ordered user and agent message history.
 
+### Session model and effort configuration
+
+At startup the adapter executes the literal `agy models` subcommand once with bounded stdout, stderr, duration, model count, identifier length, and label length. The account-specific result is parsed as tab-separated model ID and display-name pairs; malformed, duplicate, oversized, timed-out, or unsuccessful discovery fails startup without exposing backend output. Restarting the adapter refreshes the cached list.
+
+`session/new` and `session/resume` return two standard ACP `configOptions` selectors:
+
+- `model`, category `model`, contains `default` followed by the discovered model variants.
+- `effort`, category `thought_level`, contains `default`, `low`, `medium`, `high`, and `max` for the default model.
+
+`session/set_config_option` returns the complete updated option state. A concrete model ID already identifies an effort variant in `agy 1.2.14`; selecting one therefore updates the displayed effort and launches the next generation with `--model <variant>`. Changing effort while a concrete model is selected moves to that model family's matching discovered variant and rejects unsupported levels. Returning the model to `default` retains its effective effort and launches subsequent generations with only `--effort <level>`; selecting both defaults passes neither flag. Changes during an active prompt affect the next prompt because every completed generation is retired. Explicit model launches fail closed if the `init` event reports a different model.
+
 ### Unsupported for the first implementation
 
 - Authentication and provider methods
-- Session list, delete, fork, modes, and configuration options
+- Session list, delete, fork, and legacy modes
 - HTTP and SSE MCP transports unless their capabilities are advertised
 - Client file, terminal, permission, and elicitation calls
 - Image, audio, and embedded resource prompt content
@@ -108,10 +119,10 @@ Image, audio, and embedded resource blocks are rejected until their capabilities
 The current compatibility baseline is `agy 1.2.14`. The persistent adapter invocation is:
 
 ```text
-agy --input-format stream-json --output-format stream-json
+agy [--model <variant> | --effort <low|medium|high|max>] --input-format stream-json --output-format stream-json
 ```
 
-Prompts are written only as stdin `user` events. The adapter does not pass `--print` or `--print-timeout`: print mode is for a single command-line prompt, and an upstream print timeout may return partial output as success. The adapter exclusively owns initialization and prompt deadlines. Internal process-generation continuity and ACP `session/resume` add `--conversation <opaque-id>`, and additional directories add repeated `--add-dir <absolute-path>` arguments.
+Prompts are written only as stdin `user` events. The adapter does not pass `--print` or `--print-timeout`: print mode is for a single command-line prompt, and an upstream print timeout may return partial output as success. The adapter exclusively owns initialization and prompt deadlines. Internal process-generation continuity and ACP `session/resume` add `--conversation <opaque-id>`, additional directories add repeated `--add-dir <absolute-path>` arguments, and the optional model or effort selector is passed as one literal argument pair without a shell.
 
 The adapter writes one user event per prompt:
 
@@ -208,6 +219,7 @@ An `agy` structured execution error uses `-32010` with the same generic message 
 Central configuration must bound at least:
 
 - ACP and `agy` line size
+- Model discovery duration, stdout/stderr bytes, model count, identifier length, and label length
 - Retained standard-error bytes
 - Active plus starting sessions
 - MCP server, argument, environment-item, per-spec, total-spec, and process-environment override sizes
@@ -234,8 +246,8 @@ Every listed row needs an automated test before the first release.
 | Area | Required cases |
 | --- | --- |
 | ACP framing | Valid request and notification, malformed JSON, wrong `jsonrpc`, missing or invalid ID/method, embedded newline, oversized record, EOF remainder |
-| Dispatch | Baseline methods, unknown method, notification without response, stable `session/close`, unsupported optional methods |
-| Initialization | Compatible version, unsupported lower v1-shaped and higher canonical v2-shaped versions, truthful stable capabilities, invalid capability input, init timeout, early exit |
+| Dispatch | Baseline methods, `session/set_config_option`, unknown method, notification without response, stable `session/close`, unsupported optional methods |
+| Initialization | Compatible version, unsupported lower v1-shaped and higher canonical v2-shaped versions, truthful stable capabilities, bounded model discovery success/failure/timeout/cancellation, invalid capability input, init timeout, early exit |
 | MCP | Empty list; one and many stdio servers; invalid command/args/env and duplicate names; lazy first-prompt startup; opaque project-name collision avoidance; concurrent environment isolation; cwd and additional-directory order; initial/launcher failure; success/cancel/timeout/close/disconnect cleanup; descendant cleanup; stale lease and cleanup retry; HTTP/SSE/ACP rejection; no persisted secret values |
 | Prompt input | Text, resource link, mixed ordering, empty prompt, unsupported block, invalid paths, strict invalid-list rejection |
 | Streaming | One delta, many deltas, split records, slow consumer, final suffix, no-delta final response, conflicting final response, response barrier |
@@ -243,6 +255,7 @@ Every listed row needs an automated test before the first release.
 | Terminal outcomes | `SUCCESS`, `ERROR`, `CANCELED`, `INTERRUPTED`, `INVALID`, `WAITING`, `RUNNING`, unknown status, malformed `agy` JSON, oversized backend record, premature stdout EOF, non-zero exit, unknown event, exit while events are queued |
 | Cancellation | Session cancel, request cancel with `-32800`, timeout, cancel/result race, cancel/exit race, ignored graceful signal, hard-kill barrier |
 | Sessions | Capacity, concurrent sessions, duplicate prompt, idle restart, startup retirement, external and existing-session resume, resume identity/cwd rejection, resume concurrency, disconnect cleanup, unknown session |
+| Configuration | Model listing parse and bounds, default model/effort, exact model selection, family effort transitions, unsupported values, resume preservation, active-prompt next-turn application, literal argv propagation, selected-model init verification |
 | Conditional surface | Resume without history, complete ordered load-history replay upstream gate, close idle/active/starting/duplicate, additional-directory ordering and validation |
 | Errors and redaction | Every fixed code/message, invalid params containing sensitive sentinel values, internal exception, stderr exclusion, no raw Pydantic errors |
 | Platforms | Linux process group, macOS process group |

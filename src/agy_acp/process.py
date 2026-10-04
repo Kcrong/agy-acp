@@ -118,6 +118,8 @@ class AgyProcess:
                 config.command,
                 conversation_id=config.conversation_id,
                 additional_directories=config.additional_directories,
+                model=config.model,
+                effort=config.effort,
             )
         except (OSError, RuntimeError, ValueError):
             cls._run_prestart_callback(config)

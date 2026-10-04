@@ -40,7 +40,7 @@ A project-owned `AcpStdioServer` therefore:
 - Validates the JSON-RPC envelope and raw method parameters before constructing SDK models
 - Rejects invalid list items instead of silently dropping them
 - Tracks request IDs and implements `$/cancel_request`
-- Dispatches stable `session/close` and `session/resume` without enabling unrelated unstable routes
+- Dispatches stable `session/close`, `session/resume`, and `session/set_config_option` without enabling unrelated unstable routes
 - Negotiates unsupported lower or higher protocol versions to the latest supported stable version while strictly distinguishing canonical v1 and v2-shaped initialization fields
 - Serializes successful SDK models with protocol aliases
 - Maps all failures to fixed, redacted JSON-RPC errors
@@ -62,6 +62,7 @@ src/agy_acp/
   agent.py
   sessions.py
   process.py
+  models.py
   mcp.py
   mcp_launcher.py
   events.py
@@ -148,6 +149,8 @@ Deterministic tests cover success, startup and launcher failure, cancellation, t
 - Linux and macOS start `agy` in a new process session and signal the process group.
 - Windows is not a supported platform and has no CI or process-control contract in this implementation.
 - Persistent `agy` processes run without print-mode or child timeout flags; `AgyProcess` owns all deadlines.
+- Adapter startup runs the literal `agy models` subcommand under bounded stdout, stderr, time, and process-group supervision. Strictly parsed account-specific IDs and labels are cached for session config options.
+- Each prompt generation receives at most one explicit selection flag: an exact model variant through `--model`, or an effort for the default model through `--effort`.
 - Graceful termination is attempted first.
 - One shared cleanup task owns the destructive process-group signal across explicit shutdown and root-exit observation; concurrent callers join it rather than signaling the PGID again.
 - Group cleanup treats only `ESRCH` as proof that the group disappeared. Darwin `EPERM` remains pending because a zombie-only group can produce it; persistent `EPERM` or a still-live group at the deadline fails closed with `BackendShutdownError`.

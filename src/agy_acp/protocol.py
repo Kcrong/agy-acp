@@ -327,6 +327,7 @@ class AcpStdioServer:
             "initialize",
             "session/new",
             "session/resume",
+            "session/set_config_option",
             "session/prompt",
             "session/close",
         }:
@@ -379,6 +380,13 @@ class AcpStdioServer:
                 cwd=_required_string(params, "cwd"),
                 mcp_servers=resume_mcp_servers,
                 additional_directories=_strict_string_list(params.get("additionalDirectories")),
+            )
+        if method == "session/set_config_option":
+            _validate_params(params, {"sessionId", "configId", "value", "_meta"})
+            return await self._agent.set_config_option(
+                session_id=_required_string(params, "sessionId"),
+                config_id=_required_string(params, "configId"),
+                value=_required_string(params, "value"),
             )
         _validate_params(params, {"sessionId", "prompt", "_meta"})
         session_id = _required_string(params, "sessionId")

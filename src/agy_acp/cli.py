@@ -12,6 +12,7 @@ from acp import stdio_streams
 from agy_acp import __version__
 from agy_acp.agent import AgentConfig, AgyAgent
 from agy_acp.executable import AgyCommand, resolve_executable
+from agy_acp.models import discover_models
 from agy_acp.protocol import AcpStdioServer
 
 _DEFAULT_MAX_LINE_BYTES = 4 * 1024 * 1024
@@ -76,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 async def serve(arguments: argparse.Namespace) -> None:
     executable = resolve_executable(arguments.agy_path)
+    command = AgyCommand(executable)
+    models = await discover_models(command)
     reader, writer = await stdio_streams(limit=arguments.max_line_bytes + 1)
     server: AcpStdioServer | None = None
 
@@ -86,7 +89,8 @@ async def serve(arguments: argparse.Namespace) -> None:
 
     agent = AgyAgent(
         AgentConfig(
-            command=AgyCommand(executable),
+            command=command,
+            models=models,
             max_line_bytes=arguments.max_line_bytes,
             prompt_timeout=arguments.prompt_timeout,
         ),
