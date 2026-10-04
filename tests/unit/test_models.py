@@ -89,31 +89,40 @@ async def test_discover_models_hides_backend_failure_output(mode: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_discover_models_terminates_timeout() -> None:
+async def test_discover_models_terminates_timeout(tmp_path: Path) -> None:
     command = AgyCommand(
         Path(sys.executable).resolve(),
-        ("-u", str(FIXTURE), "model-list-slow"),
+        ("-u", str(FIXTURE), "model-list-slow", str(tmp_path)),
     )
     started = time.monotonic()
+    task = asyncio.create_task(discover_models(command, timeout=1))
+    pid_path = tmp_path / "model-root-pid"
+    await _wait_for_path(tmp_path / "model-ready")
+    pid = int(pid_path.read_text(encoding="utf-8"))
 
     with pytest.raises(ModelDiscoveryError, match="Backend model discovery failed"):
-        await discover_models(command, timeout=0.05)
+        await task
 
-    assert time.monotonic() - started < 2
+    assert time.monotonic() - started < 3
+    await _wait_for_process_exit(pid)
 
 
 @pytest.mark.asyncio
-async def test_discover_models_preserves_cancellation() -> None:
+async def test_discover_models_preserves_cancellation(tmp_path: Path) -> None:
     command = AgyCommand(
         Path(sys.executable).resolve(),
-        ("-u", str(FIXTURE), "model-list-slow"),
+        ("-u", str(FIXTURE), "model-list-slow", str(tmp_path)),
     )
     task = asyncio.create_task(discover_models(command, timeout=30))
-    await asyncio.sleep(0.05)
+    pid_path = tmp_path / "model-root-pid"
+    await _wait_for_path(tmp_path / "model-ready")
+    pid = int(pid_path.read_text(encoding="utf-8"))
 
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
+
+    await _wait_for_process_exit(pid)
 
 
 async def _wait_for_path(path: Path) -> None:

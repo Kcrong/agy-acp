@@ -53,6 +53,11 @@ if sys.argv[-1:] == ["models"]:
             raise SystemExit(12)
         raise SystemExit(0)
     if MODE == "model-list-slow":
+        marker_root = Path(sys.argv[2])
+        if not marker_root.is_absolute() or not marker_root.is_dir():
+            raise SystemExit(11)
+        (marker_root / "model-root-pid").write_text(str(os.getpid()), encoding="utf-8")
+        (marker_root / "model-ready").write_text("ready", encoding="utf-8")
         time.sleep(30)
     sys.stdout.write(
         "fake-model-high\tFake Model (High)\n"
