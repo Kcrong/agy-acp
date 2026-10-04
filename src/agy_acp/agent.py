@@ -323,8 +323,8 @@ class AgyAgent:
             ],
         ]
         if selected_model is None:
-            effort_values: Sequence[str] = (_DEFAULT_CONFIG_VALUE, *AGY_EFFORTS)
-            current_effort = session.process_config.effort or _DEFAULT_CONFIG_VALUE
+            effort_values: Sequence[str] = (_DEFAULT_CONFIG_VALUE,)
+            current_effort = _DEFAULT_CONFIG_VALUE
         elif selected_model.effort is None:
             effort_values = (_DEFAULT_CONFIG_VALUE,)
             current_effort = _DEFAULT_CONFIG_VALUE
@@ -381,27 +381,16 @@ class AgyAgent:
         process_config = session.process_config
         if config_id == "model":
             if value == _DEFAULT_CONFIG_VALUE:
-                selected = (
-                    self._models_by_id.get(process_config.model)
-                    if process_config.model is not None
-                    else None
-                )
-                effort = selected.effort if selected is not None else process_config.effort
-                process_config = replace(process_config, model=None, effort=effort)
+                process_config = replace(process_config, model=None)
             else:
                 selected = self._models_by_id.get(value)
                 if selected is None:
                     raise _invalid_params()
-                process_config = replace(process_config, model=selected.id, effort=None)
+                process_config = replace(process_config, model=selected.id)
         elif config_id == "effort":
             if process_config.model is None:
-                if value == _DEFAULT_CONFIG_VALUE:
-                    effort_value: AgyEffort | None = None
-                elif value in AGY_EFFORTS:
-                    effort_value = value
-                else:
+                if value != _DEFAULT_CONFIG_VALUE:
                     raise _invalid_params()
-                process_config = replace(process_config, effort=effort_value)
             else:
                 selected = self._models_by_id.get(process_config.model)
                 if selected is None:
@@ -415,7 +404,7 @@ class AgyAgent:
                     )
                     if sibling is None:
                         raise _invalid_params()
-                    process_config = replace(process_config, model=sibling.id, effort=None)
+                    process_config = replace(process_config, model=sibling.id)
         else:
             raise _invalid_params()
 
@@ -593,7 +582,6 @@ class AgyAgent:
                 process_config = replace(
                     process_config,
                     model=existing.process_config.model,
-                    effort=existing.process_config.effort,
                 )
                 existing.process_config = process_config
                 existing.mcp_servers = parsed_mcp_servers

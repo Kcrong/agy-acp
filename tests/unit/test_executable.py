@@ -208,58 +208,19 @@ def test_build_argv_adds_model_as_literal_argument(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("model", "effort"),
-    [
-        ("", None),
-        ("bad\x00model", None),
-        (None, "extreme"),
-        ("gemini-flash-high", "high"),
-    ],
-)
-def test_build_argv_rejects_invalid_model_or_effort(
-    model: str | None,
-    effort: str | None,
-) -> None:
+@pytest.mark.parametrize("model", ["", "bad\x00model"])
+def test_build_argv_rejects_invalid_model(model: str) -> None:
     command = AgyCommand(Path(sys.executable).resolve())
 
     with pytest.raises(ValueError):
-        build_agy_argv(command, model=model, effort=effort)
+        build_agy_argv(command, model=model)
 
 
-@pytest.mark.parametrize(
-    ("model", "effort"),
-    [
-        ("", None),
-        ("bad\x00model", None),
-        ("x" * 129, None),
-        (None, "extreme"),
-        ("gemini-flash-high", "high"),
-    ],
-)
-def test_process_config_rejects_invalid_model_or_effort(
-    tmp_path: Path,
-    model: str | None,
-    effort: object,
-) -> None:
+@pytest.mark.parametrize("model", ["", "bad\x00model", "x" * 129])
+def test_process_config_rejects_invalid_model(tmp_path: Path, model: str) -> None:
     with pytest.raises(ValueError):
         AgyProcessConfig(
             command=AgyCommand(Path(sys.executable).resolve()),
             cwd=tmp_path,
             model=model,
-            effort=effort,  # type: ignore[arg-type]
         )
-
-
-def test_build_argv_adds_effort_as_literal_argument() -> None:
-    command = AgyCommand(Path(sys.executable).resolve())
-
-    assert build_agy_argv(command, effort="max") == (
-        str(Path(sys.executable).resolve()),
-        "--effort",
-        "max",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-    )

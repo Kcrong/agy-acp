@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agy_acp.executable import AgyCommand
-from agy_acp.models import AGY_EFFORTS, AgyEffort
 
 _MAX_PENDING_EVENT_BYTES = 16 * 1024 * 1024
 _MAX_ENVIRONMENT_OVERRIDE_BYTES = 1024 * 1024
@@ -35,7 +34,6 @@ class AgyProcessConfig:
     additional_directories: tuple[Path, ...] = ()
     conversation_id: str | None = None
     model: str | None = None
-    effort: AgyEffort | None = None
     environment_overrides: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     shutdown_callback: Callable[[], None] | None = field(
         default=None,
@@ -69,10 +67,6 @@ class AgyProcessConfig:
             or len(self.model.encode("utf-8")) > 128
         ):
             raise ValueError("model is invalid")
-        if self.effort is not None and self.effort not in AGY_EFFORTS:
-            raise ValueError("effort is invalid")
-        if self.model is not None and self.effort is not None:
-            raise ValueError("model and effort are mutually exclusive")
         if not isinstance(self.environment_overrides, tuple):
             raise ValueError("environment_overrides must be a tuple")
         environment_names: set[str] = set()

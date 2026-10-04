@@ -150,7 +150,7 @@ Deterministic tests cover success, startup and launcher failure, cancellation, t
 - Windows is not a supported platform and has no CI or process-control contract in this implementation.
 - Persistent `agy` processes run without print-mode or child timeout flags; `AgyProcess` owns all deadlines.
 - Adapter startup runs the literal `agy models` subcommand under bounded stdout, stderr, time, and process-group supervision. Strictly parsed account-specific IDs and labels are cached for session config options.
-- Each prompt generation receives at most one explicit selection flag: an exact model variant through `--model`, or an effort for the default model through `--effort`.
+- Each prompt generation receives at most one explicit selection flag: the exact discovered model variant through `--model`. Effort changes select a sibling variant in the same model family rather than passing an unverified default-model effort.
 - Graceful termination is attempted first.
 - One shared cleanup task owns the destructive process-group signal across explicit shutdown and root-exit observation; concurrent callers join it rather than signaling the PGID again.
 - Group cleanup treats only `ESRCH` as proof that the group disappeared. Darwin `EPERM` remains pending because a zombie-only group can produce it; persistent `EPERM` or a still-live group at the deadline fails closed with `BackendShutdownError`.

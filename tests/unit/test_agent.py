@@ -12,7 +12,7 @@ import pytest
 from agy_acp.agent import AgentConfig, AgyAgent, serialize_prompt
 from agy_acp.errors import BackendShutdownError
 from agy_acp.executable import AgyCommand
-from agy_acp.models import AgyModel, parse_model_listing
+from agy_acp.models import AGY_EFFORTS, AgyModel, parse_model_listing
 from agy_acp.process import AgyProcess
 from agy_acp.protocol import AcpRequestError
 
@@ -985,7 +985,6 @@ async def test_additional_directories_preserve_order_across_generations(
     expected_record = {
         "additional_directories": expected,
         "model": None,
-        "effort": None,
     }
     assert records == [expected_record, expected_record]
     await agent.close_session(session.session_id)
@@ -1655,13 +1654,7 @@ async def test_session_model_and_effort_options_select_matching_variant(
     ]
     assert initial["model"]["category"] == "model"
     assert initial["effort"]["currentValue"] == "default"
-    assert [option["value"] for option in initial["effort"]["options"]] == [
-        "default",
-        "low",
-        "medium",
-        "high",
-        "max",
-    ]
+    assert [option["value"] for option in initial["effort"]["options"]] == ["default"]
     assert initial["effort"]["category"] == "thought_level"
 
     selected_model = await agent.set_config_option(
@@ -1698,50 +1691,32 @@ async def test_session_model_and_effort_options_select_matching_variant(
         for line in (marker_root / "argv.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert records == [
-        {"additional_directories": [], "model": None, "effort": None},
-        {"additional_directories": [], "model": "fake-model-low", "effort": None},
+        {"additional_directories": [], "model": None},
+        {"additional_directories": [], "model": "fake-model-low"},
     ]
     await agent.close()
 
 
 @pytest.mark.asyncio
-async def test_default_model_uses_selected_effort_flag(tmp_path: Path) -> None:
+async def test_default_model_rejects_undiscovered_effort_values(tmp_path: Path) -> None:
     async def send_update(_session_id: str, _update: dict[str, object]) -> None:
         return None
 
-    marker_root = tmp_path / "markers"
-    marker_root.mkdir()
-    agent = AgyAgent(
-        agent_config(
-            tmp_path,
-            "record-args",
-            marker_root=marker_root,
-            models=TEST_MODELS,
-        ),
-        send_update,
-    )
+    agent = AgyAgent(agent_config(tmp_path, "normal", models=TEST_MODELS), send_update)
     session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
-    await agent.set_config_option(
-        session_id=session.session_id,
-        config_id="effort",
-        value="max",
-    )
-    assert (
-        await agent.prompt(
-            session_id=session.session_id,
-            prompt=[{"type": "text", "text": "selected"}],
-        )
-    ).stop_reason == "end_turn"
 
-    records = [
-        json.loads(line)
-        for line in (marker_root / "argv.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
-    assert records[-1] == {
-        "additional_directories": [],
-        "model": None,
-        "effort": "max",
-    }
+    for value in AGY_EFFORTS:
+        with pytest.raises(AcpRequestError, match="Invalid params"):
+            await agent.set_config_option(
+                session_id=session.session_id,
+                config_id="effort",
+                value=value,
+            )
+
+    options = _config_options_by_id(session)
+    assert options["model"]["currentValue"] == "default"
+    assert options["effort"]["currentValue"] == "default"
+    assert [option["value"] for option in options["effort"]["options"]] == ["default"]
     await agent.close()
 
 

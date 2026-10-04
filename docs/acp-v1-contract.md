@@ -67,9 +67,9 @@ At startup the adapter executes the literal `agy models` subcommand once with bo
 `session/new` and `session/resume` return two standard ACP `configOptions` selectors:
 
 - `model`, category `model`, contains `default` followed by the discovered model variants.
-- `effort`, category `thought_level`, contains `default`, `low`, `medium`, `high`, and `max` for the default model.
+- `effort`, category `thought_level`, contains only `default` while agy controls the model, then the discovered sibling effort variants after a concrete model is selected.
 
-`session/set_config_option` returns the complete updated option state. A concrete model ID already identifies an effort variant in `agy 1.2.14`; selecting one therefore updates the displayed effort and launches the next generation with `--model <variant>`. Changing effort while a concrete model is selected moves to that model family's matching discovered variant and rejects unsupported levels. Returning the model to `default` retains its effective effort and launches subsequent generations with only `--effort <level>`; selecting both defaults passes neither flag. Changes during an active prompt affect the next prompt because every completed generation is retired. Explicit model launches fail closed if the `init` event reports a different model.
+`session/set_config_option` returns the complete updated option state. A concrete model ID already identifies an effort variant in `agy 1.2.14`; selecting one therefore updates the displayed effort and launches the next generation with `--model <variant>`. Changing effort while a concrete model is selected moves to that model family's matching discovered variant and rejects unsupported levels. Returning the model to `default` also returns effort to `default`; the adapter does not guess which effort values agy's account-specific default model accepts. Changes during an active prompt affect the next prompt because every completed generation is retired. Explicit model launches fail closed if the `init` event reports a different model.
 
 ### Unsupported for the first implementation
 
@@ -119,10 +119,10 @@ Image, audio, and embedded resource blocks are rejected until their capabilities
 The current compatibility baseline is `agy 1.2.14`. The persistent adapter invocation is:
 
 ```text
-agy [--model <variant> | --effort <low|medium|high|max>] --input-format stream-json --output-format stream-json
+agy [--model <variant>] --input-format stream-json --output-format stream-json
 ```
 
-Prompts are written only as stdin `user` events. The adapter does not pass `--print` or `--print-timeout`: print mode is for a single command-line prompt, and an upstream print timeout may return partial output as success. The adapter exclusively owns initialization and prompt deadlines. Internal process-generation continuity and ACP `session/resume` add `--conversation <opaque-id>`, additional directories add repeated `--add-dir <absolute-path>` arguments, and the optional model or effort selector is passed as one literal argument pair without a shell.
+Prompts are written only as stdin `user` events. The adapter does not pass `--print` or `--print-timeout`: print mode is for a single command-line prompt, and an upstream print timeout may return partial output as success. The adapter exclusively owns initialization and prompt deadlines. Internal process-generation continuity and ACP `session/resume` add `--conversation <opaque-id>`, additional directories add repeated `--add-dir <absolute-path>` arguments, and an optional discovered model variant is passed as one literal argument pair without a shell.
 
 The adapter writes one user event per prompt:
 

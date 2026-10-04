@@ -24,7 +24,12 @@ if sys.argv[-1:] == ["models"]:
         if not marker_root.is_absolute() or not marker_root.is_dir():
             raise SystemExit(11)
         if MODE == "model-list-ignore-term":
-            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            term_received = marker_root / "model-term-received"
+
+            def record_term(_signum: int, _frame: object) -> None:
+                term_received.write_text("received", encoding="utf-8")
+
+            signal.signal(signal.SIGTERM, record_term)
             (marker_root / "model-root-pid").write_text(str(os.getpid()), encoding="utf-8")
             time.sleep(30)
         child_pid = marker_root / "model-child-pid"
@@ -262,7 +267,6 @@ if MODE == "record-args":
     record = {
         "additional_directories": additional_directories,
         "model": argument_value("--model"),
-        "effort": argument_value("--effort"),
     }
     with (MARKER_ROOT / "argv.jsonl").open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(record, separators=(",", ":")) + "\n")

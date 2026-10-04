@@ -117,7 +117,7 @@ async def test_discover_models_preserves_cancellation() -> None:
 
 
 async def _wait_for_path(path: Path) -> None:
-    async with asyncio.timeout(2):
+    async with asyncio.timeout(5):
         while not path.exists():
             await asyncio.sleep(0.01)
 
@@ -164,11 +164,13 @@ async def test_discovery_timeout_kills_stubborn_descendant(tmp_path: Path) -> No
         ("-u", str(FIXTURE), "model-list-descendant", str(tmp_path)),
     )
 
-    with pytest.raises(ModelDiscoveryError, match="Backend model discovery failed"):
-        await discover_models(command, timeout=0.05)
-
+    task = asyncio.create_task(discover_models(command, timeout=1))
     pid_path = tmp_path / "model-child-pid"
     await _wait_for_path(pid_path)
+
+    with pytest.raises(ModelDiscoveryError, match="Backend model discovery failed"):
+        await task
+
     await _wait_for_process_exit(int(pid_path.read_text(encoding="utf-8")))
 
 
@@ -197,10 +199,10 @@ async def test_cancellation_during_timeout_cleanup_cannot_interrupt_owner(tmp_pa
         Path(sys.executable).resolve(),
         ("-u", str(FIXTURE), "model-list-ignore-term", str(tmp_path)),
     )
-    task = asyncio.create_task(discover_models(command, timeout=0.05))
+    task = asyncio.create_task(discover_models(command, timeout=1))
     pid_path = tmp_path / "model-root-pid"
     await _wait_for_path(pid_path)
-    await asyncio.sleep(0.08)
+    await _wait_for_path(tmp_path / "model-term-received")
     loop = asyncio.get_running_loop()
     previous_handler = loop.get_exception_handler()
     exception_contexts: list[dict[str, object]] = []
@@ -244,9 +246,10 @@ async def test_discovery_cleanup_polls_through_transient_darwin_eperm(
 
     monkeypatch.setattr(os, "killpg", transient_killpg)
 
+    task = asyncio.create_task(discover_models(command, timeout=1))
+    await _wait_for_path(pid_path)
     with pytest.raises(ModelDiscoveryError, match="Backend model discovery failed"):
-        await discover_models(command, timeout=0.05)
+        await task
 
     assert denied
-    await _wait_for_path(pid_path)
     await _wait_for_process_exit(int(pid_path.read_text(encoding="utf-8")))

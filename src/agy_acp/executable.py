@@ -63,22 +63,15 @@ def build_agy_argv(
     conversation_id: str | None = None,
     additional_directories: tuple[Path, ...] = (),
     model: str | None = None,
-    effort: str | None = None,
 ) -> tuple[str, ...]:
     argv = [
         str(command.executable),
         *command.prefix_args,
     ]
-    if model is not None and effort is not None:
-        raise ValueError("model and effort are mutually exclusive")
     if model is not None:
         if not model or "\x00" in model:
             raise ValueError("model must be nonempty and contain no NUL")
         argv.extend(("--model", model))
-    if effort is not None:
-        if effort not in {"low", "medium", "high", "max"}:
-            raise ValueError("effort is invalid")
-        argv.extend(("--effort", effort))
     argv.extend(
         (
             "--input-format",
