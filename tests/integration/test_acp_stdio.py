@@ -201,6 +201,70 @@ async def test_stdio_session_cancel_completes_prompt_as_cancelled(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_stdio_session_new_requires_mcp_servers_list(tmp_path: Path) -> None:
+    process = await start_server(tmp_path, "normal")
+    await initialize(process)
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "session/new",
+            "params": {"cwd": str(tmp_path)},
+        },
+    )
+
+    assert await receive(process) == {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "error": {"code": -32602, "message": "Invalid params"},
+    }
+    await stop_server(process)
+
+
+@pytest.mark.parametrize("method", ["session/new", "session/resume"])
+@pytest.mark.parametrize("cwd_kind", ["relative", "missing", "file"])
+@pytest.mark.asyncio
+async def test_stdio_rejects_invalid_session_working_directory(
+    tmp_path: Path,
+    method: str,
+    cwd_kind: str,
+) -> None:
+    if cwd_kind == "relative":
+        cwd = "relative-workspace"
+    elif cwd_kind == "missing":
+        cwd = str(tmp_path / "missing-workspace")
+    else:
+        workspace_file = tmp_path / "workspace-file"
+        workspace_file.write_text("not a directory", encoding="utf-8")
+        cwd = str(workspace_file)
+
+    process = await start_server(tmp_path, "normal")
+    await initialize(process)
+    params: dict[str, object] = {"cwd": cwd}
+    if method == "session/new":
+        params["mcpServers"] = []
+    else:
+        params["sessionId"] = "resume-session"
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": method,
+            "params": params,
+        },
+    )
+
+    assert await receive(process) == {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "error": {"code": -32602, "message": "Invalid params"},
+    }
+    await stop_server(process)
+
+
+@pytest.mark.asyncio
 async def test_stdio_resume_continues_without_history_replay(tmp_path: Path) -> None:
     process = await start_server(tmp_path, "tck")
     await initialize(process)
@@ -211,7 +275,7 @@ async def test_stdio_resume_continues_without_history_replay(tmp_path: Path) -> 
             "jsonrpc": "2.0",
             "id": 3,
             "method": "session/resume",
-            "params": {"sessionId": session_id, "cwd": str(tmp_path), "mcpServers": None},
+            "params": {"sessionId": session_id, "cwd": str(tmp_path)},
         },
     )
 

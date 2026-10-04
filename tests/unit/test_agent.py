@@ -1698,6 +1698,42 @@ async def test_session_model_and_effort_options_select_matching_variant(
 
 
 @pytest.mark.asyncio
+async def test_unsuffixed_model_keeps_default_effort(tmp_path: Path) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    models = (
+        *TEST_MODELS,
+        AgyModel(
+            id="custom-model",
+            name="Custom Model",
+            family_id="custom-model",
+            effort=None,
+        ),
+    )
+    agent = AgyAgent(agent_config(tmp_path, "normal", models=models), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    selected_model = await agent.set_config_option(
+        session_id=session.session_id,
+        config_id="model",
+        value="custom-model",
+    )
+
+    options = _config_options_by_id(selected_model)
+    assert options["model"]["currentValue"] == "custom-model"
+    assert options["effort"]["currentValue"] == "default"
+    assert [option["value"] for option in options["effort"]["options"]] == ["default"]
+    for value in AGY_EFFORTS:
+        with pytest.raises(AcpRequestError, match="Invalid params"):
+            await agent.set_config_option(
+                session_id=session.session_id,
+                config_id="effort",
+                value=value,
+            )
+    await agent.close()
+
+
+@pytest.mark.asyncio
 async def test_default_model_rejects_undiscovered_effort_values(tmp_path: Path) -> None:
     async def send_update(_session_id: str, _update: dict[str, object]) -> None:
         return None
