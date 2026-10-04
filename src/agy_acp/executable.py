@@ -62,15 +62,24 @@ def build_agy_argv(
     *,
     conversation_id: str | None = None,
     additional_directories: tuple[Path, ...] = (),
+    model: str | None = None,
 ) -> tuple[str, ...]:
     argv = [
         str(command.executable),
         *command.prefix_args,
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
     ]
+    if model is not None:
+        if not model or "\x00" in model:
+            raise ValueError("model must be nonempty and contain no NUL")
+        argv.extend(("--model", model))
+    argv.extend(
+        (
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+        )
+    )
     if conversation_id is not None:
         if not conversation_id or "\x00" in conversation_id:
             raise ValueError("conversation_id must be nonempty and contain no NUL")

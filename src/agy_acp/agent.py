@@ -6,6 +6,7 @@ import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 from acp import (
@@ -27,7 +28,11 @@ from acp.schema import (
     SessionAdditionalDirectoriesCapabilities,
     SessionCapabilities,
     SessionCloseCapabilities,
+    SessionConfigOptionBoolean,
+    SessionConfigOptionSelect,
+    SessionConfigSelectOption,
     SessionResumeCapabilities,
+    SetSessionConfigOptionResponse,
     TextContentBlock,
 )
 from pydantic import ValidationError
@@ -51,10 +56,12 @@ from agy_acp.mcp import (
     parse_mcp_servers,
     resolve_mcp_servers,
 )
+from agy_acp.models import AGY_EFFORTS, AgyEffort, AgyModel
 from agy_acp.process import AgyProcess
 
 UpdateSender = Callable[[str, dict[str, object]], Awaitable[None]]
 _MAX_BUFFERED_EVENT_BYTES = 128 * 1024 * 1024
+_DEFAULT_CONFIG_VALUE = "default"
 
 
 def _positive_integer(name: str, value: object) -> None:
@@ -76,6 +83,7 @@ def _positive_seconds(name: str, value: object) -> None:
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
     command: AgyCommand
+    models: tuple[AgyModel, ...] = ()
     mcp_temp_parent: Path | None = None
     max_line_bytes: int = 4 * 1024 * 1024
     max_stderr_bytes: int = 64 * 1024
@@ -90,6 +98,13 @@ class AgentConfig:
     def __post_init__(self) -> None:
         if not isinstance(self.command, AgyCommand):
             raise ValueError("command must be an AgyCommand")
+        if (
+            not isinstance(self.models, tuple)
+            or any(not isinstance(model, AgyModel) for model in self.models)
+            or len({model.id for model in self.models}) != len(self.models)
+            or any(model.id == _DEFAULT_CONFIG_VALUE for model in self.models)
+        ):
+            raise ValueError("models must be unique AgyModel values")
         if self.mcp_temp_parent is not None and (
             not isinstance(self.mcp_temp_parent, Path)
             or not self.mcp_temp_parent.is_absolute()
@@ -255,6 +270,11 @@ class AgyAgent:
     def __init__(self, config: AgentConfig, send_update: UpdateSender) -> None:
         self._config = config
         self._send_update = send_update
+        self._models_by_id = {model.id: model for model in config.models}
+        self._models_by_family: dict[str, dict[AgyEffort, AgyModel]] = {}
+        for model in config.models:
+            if model.effort is not None:
+                self._models_by_family.setdefault(model.family_id, {})[model.effort] = model
         self._sessions: dict[str, _Session] = {}
         self._orphaned_processes: set[AgyProcess] = set()
         self._mcp_manager: McpWorkspaceManager | None = None
@@ -278,6 +298,121 @@ class AgyAgent:
             ),
             agent_info=Implementation(name="agy-acp", version=__version__),
         )
+
+    def _session_config_options(
+        self,
+        session: _Session,
+    ) -> list[SessionConfigOptionSelect | SessionConfigOptionBoolean] | None:
+        if not self._config.models:
+            return None
+        selected_model: AgyModel | None = None
+        if session.process_config.model is not None:
+            selected_model = self._models_by_id.get(session.process_config.model)
+            if selected_model is None:
+                raise RuntimeError("Session model is unavailable")
+
+        model_options = [
+            SessionConfigSelectOption(
+                value=_DEFAULT_CONFIG_VALUE,
+                name="Default",
+                description="Use the model selected by agy.",
+            ),
+            *[
+                SessionConfigSelectOption(value=model.id, name=model.name)
+                for model in self._config.models
+            ],
+        ]
+        if selected_model is None:
+            effort_values: Sequence[str] = (_DEFAULT_CONFIG_VALUE,)
+            current_effort = _DEFAULT_CONFIG_VALUE
+        elif selected_model.effort is None:
+            effort_values = (_DEFAULT_CONFIG_VALUE,)
+            current_effort = _DEFAULT_CONFIG_VALUE
+        else:
+            family = self._models_by_family.get(selected_model.family_id, {})
+            effort_values = tuple(effort for effort in AGY_EFFORTS if effort in family)
+            current_effort = selected_model.effort
+
+        effort_options = [
+            SessionConfigSelectOption(
+                value=value,
+                name=value.replace("_", " ").title(),
+                description=(
+                    "Use the reasoning effort selected by agy."
+                    if value == _DEFAULT_CONFIG_VALUE
+                    else None
+                ),
+            )
+            for value in effort_values
+        ]
+        return [
+            SessionConfigOptionSelect(
+                id="model",
+                name="Model",
+                description="Select an available agy model.",
+                category="model",
+                type="select",
+                current_value=(
+                    selected_model.id if selected_model is not None else _DEFAULT_CONFIG_VALUE
+                ),
+                options=model_options,
+            ),
+            SessionConfigOptionSelect(
+                id="effort",
+                name="Reasoning Effort",
+                description="Select the reasoning effort for subsequent prompts.",
+                category="thought_level",
+                type="select",
+                current_value=current_effort,
+                options=effort_options,
+            ),
+        ]
+
+    async def set_config_option(
+        self,
+        *,
+        session_id: str,
+        config_id: str,
+        value: str,
+    ) -> SetSessionConfigOptionResponse:
+        session = self._sessions.get(session_id)
+        if session is None or session.closed or session.unusable or not self._config.models:
+            raise AcpRequestError(-32015, "Session not found")
+        process_config = session.process_config
+        if config_id == "model":
+            if value == _DEFAULT_CONFIG_VALUE:
+                process_config = replace(process_config, model=None)
+            else:
+                selected = self._models_by_id.get(value)
+                if selected is None:
+                    raise _invalid_params()
+                process_config = replace(process_config, model=selected.id)
+        elif config_id == "effort":
+            if process_config.model is None:
+                if value != _DEFAULT_CONFIG_VALUE:
+                    raise _invalid_params()
+            else:
+                selected = self._models_by_id.get(process_config.model)
+                if selected is None:
+                    raise AcpRequestError(-32603, "Internal error")
+                if selected.effort is None:
+                    if value != _DEFAULT_CONFIG_VALUE:
+                        raise _invalid_params()
+                else:
+                    sibling = self._models_by_family.get(selected.family_id, {}).get(
+                        cast(AgyEffort, value)
+                    )
+                    if sibling is None:
+                        raise _invalid_params()
+                    process_config = replace(process_config, model=sibling.id)
+        else:
+            raise _invalid_params()
+
+        session.process_config = process_config
+        options = self._session_config_options(session)
+        if options is None:
+            raise AcpRequestError(-32603, "Internal error")
+        return SetSessionConfigOptionResponse(config_options=options)
 
     def _prepare_process_config(
         self,
@@ -370,14 +505,18 @@ class AgyAgent:
                 async with self._admission_lock:
                     if self._closing or session_id in self._sessions:
                         raise _backend_unavailable()
-                    self._sessions[session_id] = _Session(
+                    created_session = _Session(
                         process_config=process_config,
                         mcp_servers=parsed_mcp_servers,
                         process=None,
                     )
+                    self._sessions[session_id] = created_session
                     self._starting_sessions -= 1
                     reserved = False
-                return NewSessionResponse(session_id=session_id)
+                return NewSessionResponse(
+                    session_id=session_id,
+                    config_options=self._session_config_options(created_session),
+                )
             except BaseException:
                 if process not in self._orphaned_processes and not process.closed:
                     try:
@@ -440,9 +579,15 @@ class AgyAgent:
                     raise AcpRequestError(-32013, "Session busy")
                 if existing.process_config.cwd.resolve() != workspace.resolve():
                     raise _invalid_params()
+                process_config = replace(
+                    process_config,
+                    model=existing.process_config.model,
+                )
                 existing.process_config = process_config
                 existing.mcp_servers = parsed_mcp_servers
-                return ResumeSessionResponse()
+                return ResumeSessionResponse(
+                    config_options=self._session_config_options(existing),
+                )
 
         await self._reserve_session()
         reserved = True
@@ -487,14 +632,17 @@ class AgyAgent:
                 async with self._admission_lock:
                     if self._closing or session_id in self._sessions:
                         raise _backend_unavailable()
-                    self._sessions[session_id] = _Session(
+                    created_session = _Session(
                         process_config=process_config,
                         mcp_servers=parsed_mcp_servers,
                         process=None,
                     )
+                    self._sessions[session_id] = created_session
                     self._starting_sessions -= 1
                     reserved = False
-                return ResumeSessionResponse()
+                return ResumeSessionResponse(
+                    config_options=self._session_config_options(created_session),
+                )
             except BaseException:
                 if process not in self._orphaned_processes and not process.closed:
                     try:
@@ -632,6 +780,10 @@ class AgyAgent:
             if (
                 process.init_event.conversation_id != session_id
                 or Path(process.init_event.cwd).resolve() != process_config.cwd.resolve()
+                or (
+                    process_config.model is not None
+                    and process.init_event.model != process_config.model
+                )
                 or self._closing
                 or session.closed
                 or session.unusable

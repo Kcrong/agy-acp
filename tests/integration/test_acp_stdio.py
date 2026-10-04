@@ -215,7 +215,13 @@ async def test_stdio_resume_continues_without_history_replay(tmp_path: Path) -> 
         },
     )
 
-    assert await receive(process) == {"jsonrpc": "2.0", "id": 3, "result": {}}
+    resumed = await receive(process)
+    assert resumed["jsonrpc"] == "2.0"
+    assert resumed["id"] == 3
+    assert [option["id"] for option in resumed["result"]["configOptions"]] == [
+        "model",
+        "effort",
+    ]
     await send(
         process,
         {
@@ -271,7 +277,9 @@ async def test_stdio_rejects_unknown_method_and_accepts_stdio_mcp(tmp_path: Path
             },
         },
     )
-    assert (await receive(process))["result"] == {"sessionId": "fake-session"}
+    created = (await receive(process))["result"]
+    assert created["sessionId"] == "fake-session"
+    assert [option["id"] for option in created["configOptions"]] == ["model", "effort"]
     await send(
         process,
         {
@@ -971,3 +979,92 @@ async def test_stdio_disconnect_cleans_active_mcp_generation_and_descendant(
     assert not list(mcp_temp_parent.iterdir())
     assert process.stderr is not None
     assert await process.stderr.read() == b""
+
+
+@pytest.mark.asyncio
+async def test_stdio_selects_model_and_effort_with_session_config_options(
+    tmp_path: Path,
+) -> None:
+    process = await start_server(tmp_path, "normal")
+    await initialize(process)
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "session/new",
+            "params": {"cwd": str(tmp_path), "mcpServers": []},
+        },
+    )
+    created = await receive(process)
+    session_id = created["result"]["sessionId"]
+    options = {option["id"]: option for option in created["result"]["configOptions"]}
+    assert options["model"]["currentValue"] == "default"
+    assert options["effort"]["currentValue"] == "default"
+
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "session/set_config_option",
+            "params": {
+                "sessionId": session_id,
+                "configId": "model",
+                "value": "fake-model-high",
+            },
+        },
+    )
+    selected_model = await receive(process)
+    options = {option["id"]: option for option in selected_model["result"]["configOptions"]}
+    assert options["model"]["currentValue"] == "fake-model-high"
+    assert options["effort"]["currentValue"] == "high"
+
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "session/set_config_option",
+            "params": {
+                "sessionId": session_id,
+                "configId": "effort",
+                "value": "low",
+            },
+        },
+    )
+    selected_effort = await receive(process)
+    options = {option["id"]: option for option in selected_effort["result"]["configOptions"]}
+    assert options["model"]["currentValue"] == "fake-model-low"
+    assert options["effort"]["currentValue"] == "low"
+
+    await send(
+        process,
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "session/set_config_option",
+            "params": {
+                "sessionId": session_id,
+                "configId": "effort",
+                "value": True,
+            },
+        },
+    )
+    invalid = await receive(process)
+    assert invalid["error"] == {"code": -32602, "message": "Invalid params"}
+    await stop_server(process)
+
+
+@pytest.mark.asyncio
+async def test_stdio_model_discovery_failure_is_redacted(tmp_path: Path) -> None:
+    process = await start_server(tmp_path, "model-list-error")
+
+    async with asyncio.timeout(3):
+        assert await process.wait() == 1
+    assert process.stdout is not None
+    assert await process.stdout.read() == b""
+    assert process.stderr is not None
+    stderr = await process.stderr.read()
+    assert stderr == b"agy-acp: server failed\n"
+    assert b"credential-sentinel" not in stderr

@@ -12,10 +12,16 @@ import pytest
 from agy_acp.agent import AgentConfig, AgyAgent, serialize_prompt
 from agy_acp.errors import BackendShutdownError
 from agy_acp.executable import AgyCommand
+from agy_acp.models import AGY_EFFORTS, AgyModel, parse_model_listing
 from agy_acp.process import AgyProcess
 from agy_acp.protocol import AcpRequestError
 
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "fake_agy.py"
+TEST_MODELS = parse_model_listing(
+    b"fake-model-high\tFake Model (High)\n"
+    b"fake-model-medium\tFake Model (Medium)\n"
+    b"fake-model-low\tFake Model (Low)\n"
+)
 
 
 def agent_config(
@@ -29,6 +35,7 @@ def agent_config(
     kill_grace: float = 1,
     marker_root: Path | None = None,
     mcp_temp_parent: Path | None = None,
+    models: tuple[AgyModel, ...] = (),
 ) -> AgentConfig:
     prefix_args: tuple[str, ...] = ("-u", str(FIXTURE), mode)
     if marker_root is not None:
@@ -38,6 +45,7 @@ def agent_config(
             Path(sys.executable).resolve(),
             prefix_args,
         ),
+        models=models,
         mcp_temp_parent=mcp_temp_parent,
         max_line_bytes=4096,
         max_stderr_bytes=64,
@@ -974,7 +982,11 @@ async def test_additional_directories_preserve_order_across_generations(
         json.loads(line)
         for line in (marker_root / "argv.jsonl").read_text(encoding="utf-8").splitlines()
     ]
-    assert records == [expected, expected]
+    expected_record = {
+        "additional_directories": expected,
+        "model": None,
+    }
+    assert records == [expected_record, expected_record]
     await agent.close_session(session.session_id)
     await agent.close()
 
@@ -1605,4 +1617,228 @@ async def test_clean_exit_drains_saturated_queue_before_process_end(
     assert response.stop_reason == "end_turn"
     assert updates == ["x", "x", "x", "x"]
     await agent.close_session(session.session_id)
+    await agent.close()
+
+
+def _config_options_by_id(response: object) -> dict[str, dict[str, Any]]:
+    payload = response.model_dump(mode="json", by_alias=True, exclude_none=True)  # type: ignore[attr-defined]
+    return {option["id"]: option for option in payload["configOptions"]}
+
+
+@pytest.mark.asyncio
+async def test_session_model_and_effort_options_select_matching_variant(
+    tmp_path: Path,
+) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    marker_root = tmp_path / "markers"
+    marker_root.mkdir()
+    agent = AgyAgent(
+        agent_config(
+            tmp_path,
+            "record-args",
+            marker_root=marker_root,
+            models=TEST_MODELS,
+        ),
+        send_update,
+    )
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    initial = _config_options_by_id(session)
+    assert initial["model"]["currentValue"] == "default"
+    assert [option["value"] for option in initial["model"]["options"]] == [
+        "default",
+        "fake-model-high",
+        "fake-model-medium",
+        "fake-model-low",
+    ]
+    assert initial["model"]["category"] == "model"
+    assert initial["effort"]["currentValue"] == "default"
+    assert [option["value"] for option in initial["effort"]["options"]] == ["default"]
+    assert initial["effort"]["category"] == "thought_level"
+
+    selected_model = await agent.set_config_option(
+        session_id=session.session_id,
+        config_id="model",
+        value="fake-model-high",
+    )
+    selected = _config_options_by_id(selected_model)
+    assert selected["model"]["currentValue"] == "fake-model-high"
+    assert selected["effort"]["currentValue"] == "high"
+    assert [option["value"] for option in selected["effort"]["options"]] == [
+        "low",
+        "medium",
+        "high",
+    ]
+
+    selected_effort = await agent.set_config_option(
+        session_id=session.session_id,
+        config_id="effort",
+        value="low",
+    )
+    selected = _config_options_by_id(selected_effort)
+    assert selected["model"]["currentValue"] == "fake-model-low"
+    assert selected["effort"]["currentValue"] == "low"
+    assert (
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "selected"}],
+        )
+    ).stop_reason == "end_turn"
+
+    records = [
+        json.loads(line)
+        for line in (marker_root / "argv.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert records == [
+        {"additional_directories": [], "model": None},
+        {"additional_directories": [], "model": "fake-model-low"},
+    ]
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_default_model_rejects_undiscovered_effort_values(tmp_path: Path) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    agent = AgyAgent(agent_config(tmp_path, "normal", models=TEST_MODELS), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+
+    for value in AGY_EFFORTS:
+        with pytest.raises(AcpRequestError, match="Invalid params"):
+            await agent.set_config_option(
+                session_id=session.session_id,
+                config_id="effort",
+                value=value,
+            )
+
+    options = _config_options_by_id(session)
+    assert options["model"]["currentValue"] == "default"
+    assert options["effort"]["currentValue"] == "default"
+    assert [option["value"] for option in options["effort"]["options"]] == ["default"]
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_session_config_rejects_unknown_or_unsupported_values(tmp_path: Path) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    agent = AgyAgent(agent_config(tmp_path, "normal", models=TEST_MODELS), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    for config_id, value in (
+        ("unknown", "low"),
+        ("model", "missing-model"),
+        ("effort", "extreme"),
+    ):
+        with pytest.raises(AcpRequestError, match="Invalid params"):
+            await agent.set_config_option(
+                session_id=session.session_id,
+                config_id=config_id,
+                value=value,
+            )
+
+    await agent.set_config_option(
+        session_id=session.session_id,
+        config_id="model",
+        value="fake-model-high",
+    )
+    with pytest.raises(AcpRequestError, match="Invalid params"):
+        await agent.set_config_option(
+            session_id=session.session_id,
+            config_id="effort",
+            value="max",
+        )
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_existing_session_preserves_model_selection(tmp_path: Path) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    agent = AgyAgent(agent_config(tmp_path, "normal", models=TEST_MODELS), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    await agent.set_config_option(
+        session_id=session.session_id,
+        config_id="model",
+        value="fake-model-medium",
+    )
+
+    resumed = await agent.resume_session(
+        session_id=session.session_id,
+        cwd=str(tmp_path),
+        mcp_servers=[],
+    )
+
+    options = _config_options_by_id(resumed)
+    assert options["model"]["currentValue"] == "fake-model-medium"
+    assert options["effort"]["currentValue"] == "medium"
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_selected_model_must_match_backend_initialization(tmp_path: Path) -> None:
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        return None
+
+    agent = AgyAgent(
+        agent_config(tmp_path, "model-mismatch", models=TEST_MODELS),
+        send_update,
+    )
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    await agent.set_config_option(
+        session_id=session.session_id,
+        config_id="model",
+        value="fake-model-high",
+    )
+
+    with pytest.raises(AcpRequestError, match="Backend unavailable"):
+        await agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "selected"}],
+        )
+
+    await agent.close()
+
+
+@pytest.mark.asyncio
+async def test_config_change_during_prompt_applies_to_next_generation(tmp_path: Path) -> None:
+    update_received = asyncio.Event()
+
+    async def send_update(_session_id: str, _update: dict[str, object]) -> None:
+        update_received.set()
+
+    agent = AgyAgent(agent_config(tmp_path, "hang", models=TEST_MODELS), send_update)
+    session = await agent.new_session(cwd=str(tmp_path), mcp_servers=[])
+    first_prompt = asyncio.create_task(
+        agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "first"}],
+        )
+    )
+    async with asyncio.timeout(2):
+        await update_received.wait()
+
+    selected = await agent.set_config_option(
+        session_id=session.session_id,
+        config_id="model",
+        value="fake-model-high",
+    )
+    assert _config_options_by_id(selected)["model"]["currentValue"] == "fake-model-high"
+    await agent.cancel(session.session_id)
+    assert (await first_prompt).stop_reason == "cancelled"
+
+    update_received.clear()
+    second_prompt = asyncio.create_task(
+        agent.prompt(
+            session_id=session.session_id,
+            prompt=[{"type": "text", "text": "second"}],
+        )
+    )
+    async with asyncio.timeout(2):
+        await update_received.wait()
+    await agent.cancel(session.session_id)
+    assert (await second_prompt).stop_reason == "cancelled"
     await agent.close()

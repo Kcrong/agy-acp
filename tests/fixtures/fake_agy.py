@@ -10,6 +10,62 @@ import time
 from pathlib import Path
 
 MODE = sys.argv[1]
+
+
+if sys.argv[-1:] == ["models"]:
+    if MODE == "model-list-error":
+        sys.stderr.write("credential-sentinel\n")
+        raise SystemExit(7)
+    if MODE == "model-list-malformed":
+        sys.stdout.write("malformed-model-line\n")
+        raise SystemExit(0)
+    if MODE in {"model-list-ignore-term", "model-list-descendant"}:
+        marker_root = Path(sys.argv[2])
+        if not marker_root.is_absolute() or not marker_root.is_dir():
+            raise SystemExit(11)
+        if MODE == "model-list-ignore-term":
+            term_received = marker_root / "model-term-received"
+
+            def record_term(_signum: int, _frame: object) -> None:
+                term_received.write_text("received", encoding="utf-8")
+
+            signal.signal(signal.SIGTERM, record_term)
+            (marker_root / "model-root-pid").write_text(str(os.getpid()), encoding="utf-8")
+            time.sleep(30)
+        child_pid = marker_root / "model-child-pid"
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import os,signal,sys,time; from pathlib import Path; "
+                    "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+                    "Path(sys.argv[1]).write_text(str(os.getpid()), encoding='utf-8'); "
+                    "time.sleep(30)"
+                ),
+                str(child_pid),
+            ]
+        )
+        deadline = time.monotonic() + 2
+        while not child_pid.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if not child_pid.exists():
+            raise SystemExit(12)
+        raise SystemExit(0)
+    if MODE == "model-list-slow":
+        marker_root = Path(sys.argv[2])
+        if not marker_root.is_absolute() or not marker_root.is_dir():
+            raise SystemExit(11)
+        (marker_root / "model-root-pid").write_text(str(os.getpid()), encoding="utf-8")
+        (marker_root / "model-ready").write_text("ready", encoding="utf-8")
+        time.sleep(30)
+    sys.stdout.write(
+        "fake-model-high\tFake Model (High)\n"
+        "fake-model-medium\tFake Model (Medium)\n"
+        "fake-model-low\tFake Model (Low)\n"
+    )
+    raise SystemExit(0)
+
 MARKER_ROOT = Path(sys.argv[2]) if len(sys.argv) > 2 and Path(sys.argv[2]).is_absolute() else None
 
 
@@ -213,8 +269,12 @@ if MODE == "record-args":
         for index, argument in enumerate(arguments[:-1])
         if argument == "--add-dir"
     ]
+    record = {
+        "additional_directories": additional_directories,
+        "model": argument_value("--model"),
+    }
     with (MARKER_ROOT / "argv.jsonl").open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps(additional_directories, separators=(",", ":")) + "\n")
+        stream.write(json.dumps(record, separators=(",", ":")) + "\n")
 
 emit(
     {
@@ -224,6 +284,11 @@ emit(
             "cwd": INIT_CWD,
             "permission_mode": "request-review",
             "tools": [],
+            "model": (
+                "different-model"
+                if MODE == "model-mismatch" and argument_value("--model") is not None
+                else argument_value("--model")
+            ),
         },
     }
 )

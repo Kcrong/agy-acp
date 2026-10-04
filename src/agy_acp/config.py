@@ -33,6 +33,7 @@ class AgyProcessConfig:
     cwd: Path
     additional_directories: tuple[Path, ...] = ()
     conversation_id: str | None = None
+    model: str | None = None
     environment_overrides: tuple[tuple[str, str], ...] = field(default=(), repr=False)
     shutdown_callback: Callable[[], None] | None = field(
         default=None,
@@ -59,6 +60,13 @@ class AgyProcessConfig:
             not self.conversation_id or "\x00" in self.conversation_id
         ):
             raise ValueError("conversation_id must be nonempty and contain no NUL")
+        if self.model is not None and (
+            not isinstance(self.model, str)
+            or not self.model
+            or "\x00" in self.model
+            or len(self.model.encode("utf-8")) > 128
+        ):
+            raise ValueError("model is invalid")
         if not isinstance(self.environment_overrides, tuple):
             raise ValueError("environment_overrides must be a tuple")
         environment_names: set[str] = set()

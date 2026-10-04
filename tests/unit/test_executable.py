@@ -181,3 +181,46 @@ def test_process_config_bounds_and_redacts_environment_ownership(tmp_path: Path)
             cwd=tmp_path,
             shutdown_callback="credential-sentinel",  # type: ignore[arg-type]
         )
+
+
+def test_build_argv_adds_model_as_literal_argument(tmp_path: Path) -> None:
+    command = AgyCommand(Path(sys.executable).resolve())
+
+    argv = build_agy_argv(
+        command,
+        conversation_id="session",
+        additional_directories=(tmp_path,),
+        model="gemini-flash-high",
+    )
+
+    assert argv == (
+        str(Path(sys.executable).resolve()),
+        "--model",
+        "gemini-flash-high",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--conversation",
+        "session",
+        "--add-dir",
+        str(tmp_path),
+    )
+
+
+@pytest.mark.parametrize("model", ["", "bad\x00model"])
+def test_build_argv_rejects_invalid_model(model: str) -> None:
+    command = AgyCommand(Path(sys.executable).resolve())
+
+    with pytest.raises(ValueError):
+        build_agy_argv(command, model=model)
+
+
+@pytest.mark.parametrize("model", ["", "bad\x00model", "x" * 129])
+def test_process_config_rejects_invalid_model(tmp_path: Path, model: str) -> None:
+    with pytest.raises(ValueError):
+        AgyProcessConfig(
+            command=AgyCommand(Path(sys.executable).resolve()),
+            cwd=tmp_path,
+            model=model,
+        )

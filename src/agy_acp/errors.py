@@ -120,3 +120,8 @@ class InvalidMcpConfigError(AgyAcpError):
 class McpHandoffError(AgyAcpError):
     def __init__(self) -> None:
         super().__init__("MCP handoff failed")
+
+
+class ModelDiscoveryError(AgyAcpError):
+    def __init__(self) -> None:
+        super().__init__("Backend model discovery failed")

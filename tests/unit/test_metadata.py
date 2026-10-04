@@ -111,6 +111,9 @@ def test_readme_documents_verified_pipx_flows() -> None:
     assert 'pipx run --spec "agy-acp==X.Y.Z" agy-acp --help' in readme
     assert "Python 3.13 or 3.14 executable with `--python`" in readme
     assert "It does not install or authenticate the required `agy` backend." in readme
+    assert "models returned by `agy models`" in readme
+    assert "reasoning effort" in readme
+    assert "restarting the adapter refreshes" in readme
     assert "Until the first PyPI release" not in readme
 
 
