@@ -118,9 +118,15 @@ def test_publish_workflow_is_ci_gated_automatic_and_sha_pinned() -> None:
     assert prepare["outputs"] == {"publish-needed": "${{ steps.plan.outputs.publish-needed }}"}
     publish = workflow["jobs"]["publish"]
     assert publish["environment"]["name"] == "pypi"
-    assert publish["permissions"] == {"contents": "read", "id-token": "write"}
-    assert set(publish["needs"]) == {"tag", "build", "prepare-publish"}
+    assert publish["permissions"] == {"id-token": "write"}
+    assert set(publish["needs"]) == {"tag", "prepare-publish"}
     assert publish["if"] == "${{ needs.prepare-publish.outputs.publish-needed == 'true' }}"
+    publish_steps = publish["steps"]
+    assert [step["uses"].split("@")[0] for step in publish_steps] == [
+        "actions/download-artifact",
+        "pypa/gh-action-pypi-publish",
+    ]
+    assert all("run" not in step for step in publish_steps)
 
     references = action_references(workflow)
     assert references
@@ -161,7 +167,8 @@ def test_publish_workflow_is_ci_gated_automatic_and_sha_pinned() -> None:
     assert "if: ${{ needs.tag.outputs.tag != '' }}" in raw
     assert "refs/tags/${{ needs.tag.outputs.tag }}" in raw
     assert "Build once from the release tag" in raw
-    assert raw.count("python -m scripts.prepare_pypi_publish") == 2
+    assert raw.count("python -m scripts.prepare_pypi_publish") == 1
+    assert "pypi-pending-distributions" in raw
     assert "needs.prepare-publish.outputs.publish-needed == 'true'" in raw
     assert "steps.plan.outputs.publish-needed == 'true'" in raw
     assert "skip-existing: false" in raw

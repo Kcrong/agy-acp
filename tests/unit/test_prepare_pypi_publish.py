@@ -1,5 +1,7 @@
 import json
+from email.message import Message
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -165,3 +167,90 @@ def test_main_hides_failure_details(
     assert captured.out == ""
     assert captured.err == "PyPI publication plan: failed\n"
     assert str(source) not in captured.err
+
+
+class _FakeResponse:
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(
+        self,
+        _exception_type: object,
+        _exception: object,
+        _traceback: object,
+    ) -> None:
+        return None
+
+    def read(self, limit: int = -1) -> bytes:
+        if limit < 0:
+            return self._payload
+        return self._payload[:limit]
+
+
+def test_fetch_published_hashes_reads_bounded_release_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hashes = {_WHEEL: "a" * 64, _SDIST: "b" * 64}
+    payload = json.dumps(_release_payload(hashes)).encode()
+
+    def open_response(_request: object, *, timeout: int) -> _FakeResponse:
+        assert timeout == 30
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr(prepare_pypi_publish, "urlopen", open_response)
+
+    assert prepare_pypi_publish._fetch_published_hashes(_VERSION) == hashes
+
+
+def test_fetch_published_hashes_treats_404_as_new_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def not_found(*_args: object, **_kwargs: object) -> None:
+        raise HTTPError("pypi", 404, "not found", Message(), None)
+
+    monkeypatch.setattr(prepare_pypi_publish, "urlopen", not_found)
+
+    assert prepare_pypi_publish._fetch_published_hashes(_VERSION) == {}
+
+
+def test_fetch_published_hashes_wraps_network_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unavailable(*_args: object, **_kwargs: object) -> None:
+        raise URLError("unavailable")
+
+    monkeypatch.setattr(prepare_pypi_publish, "urlopen", unavailable)
+
+    with pytest.raises(RuntimeError, match="query failed"):
+        prepare_pypi_publish._fetch_published_hashes(_VERSION)
+
+
+def test_fetch_published_hashes_rejects_oversized_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = b"x" * (prepare_pypi_publish._MAX_RESPONSE_BYTES + 1)
+
+    def open_response(_request: object, *, timeout: int) -> _FakeResponse:
+        assert timeout == 30
+        return _FakeResponse(payload)
+
+    monkeypatch.setattr(prepare_pypi_publish, "urlopen", open_response)
+
+    with pytest.raises(RuntimeError, match="exceeded"):
+        prepare_pypi_publish._fetch_published_hashes(_VERSION)
+
+
+def test_fetch_published_hashes_rejects_malformed_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def open_response(_request: object, *, timeout: int) -> _FakeResponse:
+        assert timeout == 30
+        return _FakeResponse(b"{")
+
+    monkeypatch.setattr(prepare_pypi_publish, "urlopen", open_response)
+
+    with pytest.raises(RuntimeError, match="valid JSON"):
+        prepare_pypi_publish._fetch_published_hashes(_VERSION)
