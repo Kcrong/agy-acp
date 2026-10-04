@@ -11,17 +11,20 @@ on:
       - ready_for_review
       - reopened
       - synchronize
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
-    if: ${{ github.event.action != 'closed' && github.event.pull_request.draft == false }}
+    if: ${{ github.event_name == 'push' || (github.event.action != 'closed' && github.event.pull_request.draft == false) }}
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -40,6 +43,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
 
       - name: Set up Python

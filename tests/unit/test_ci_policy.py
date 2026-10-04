@@ -8,7 +8,7 @@ def load_workflow() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_ci_trigger_is_ready_pull_request_only() -> None:
+def test_ci_trigger_covers_ready_pull_requests_and_main_pushes() -> None:
     workflow = load_workflow()
     trigger = workflow.split("\non:\n", maxsplit=1)[1].split("\npermissions:\n", maxsplit=1)[0]
 
@@ -24,12 +24,14 @@ def test_ci_trigger_is_ready_pull_request_only() -> None:
       - ready_for_review
       - reopened
       - synchronize
+  push:
+    branches:
+      - main
 """
     )
-    assert "\n  push:" not in workflow
 
 
-def test_ci_has_one_latest_run_wins_job() -> None:
+def test_ci_concurrency_is_revision_scoped() -> None:
     workflow = load_workflow()
     jobs = workflow.split("\njobs:\n", maxsplit=1)[1]
     job_headers = [
@@ -41,14 +43,14 @@ def test_ci_has_one_latest_run_wins_job() -> None:
     assert job_headers == ["test"]
     assert (
         """concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 """
         in workflow
     )
     assert (
-        "    if: ${{ github.event.action != 'closed' "
-        "&& github.event.pull_request.draft == false }}\n"
+        "    if: ${{ github.event_name == 'push' || (github.event.action != 'closed' "
+        "&& github.event.pull_request.draft == false) }}\n"
     ) in workflow
 
 

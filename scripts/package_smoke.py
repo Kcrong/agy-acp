@@ -69,6 +69,22 @@ def _distribution_files(directory: Path) -> tuple[Path, Path]:
     return wheels[0], sdists[0]
 
 
+def _distribution_version(wheel: Path, sdist: Path) -> str:
+    wheel_prefix = "agy_acp-"
+    wheel_suffix = "-py3-none-any.whl"
+    sdist_prefix = "agy_acp-"
+    sdist_suffix = ".tar.gz"
+    if not wheel.name.startswith(wheel_prefix) or not wheel.name.endswith(wheel_suffix):
+        raise RuntimeError("Wheel filename is invalid")
+    if not sdist.name.startswith(sdist_prefix) or not sdist.name.endswith(sdist_suffix):
+        raise RuntimeError("Sdist filename is invalid")
+    wheel_version = wheel.name[len(wheel_prefix) : -len(wheel_suffix)]
+    sdist_version = sdist.name[len(sdist_prefix) : -len(sdist_suffix)]
+    if not wheel_version or wheel_version != sdist_version:
+        raise RuntimeError("Distribution versions are inconsistent")
+    return wheel_version
+
+
 def _validate_wheel(path: Path, version: str) -> bytes:
     source_files = _source_files()
     dist_info = f"agy_acp-{version}.dist-info"
@@ -150,11 +166,11 @@ def _validate_sdist(path: Path, version: str) -> bytes:
         return metadata.read()
 
 
-def _validate_metadata(raw: bytes, project: Mapping[str, Any]) -> None:
+def _validate_metadata(raw: bytes, project: Mapping[str, Any], version: str) -> None:
     metadata = BytesParser(policy=email.policy.default).parsebytes(raw)
     expected = {
         "Name": project["name"],
-        "Version": project["version"],
+        "Version": version,
         "License-Expression": project["license"],
     }
     for name, value in expected.items():
@@ -280,14 +296,12 @@ def run(directory: Path) -> None:
     if not directory.is_absolute() or not directory.is_dir():
         raise ValueError("distribution path must be an existing absolute directory")
     project = _project()
-    version = project.get("version")
-    if not isinstance(version, str) or not version:
-        raise RuntimeError("Project version is invalid")
     wheel, sdist = _distribution_files(directory)
+    version = _distribution_version(wheel, sdist)
     wheel_metadata = _validate_wheel(wheel, version)
     sdist_metadata = _validate_sdist(sdist, version)
-    _validate_metadata(wheel_metadata, project)
-    _validate_metadata(sdist_metadata, project)
+    _validate_metadata(wheel_metadata, project, version)
+    _validate_metadata(sdist_metadata, project, version)
     if wheel_metadata != sdist_metadata:
         raise RuntimeError("Wheel and sdist metadata differ")
     _validate_clean_install(wheel, version)

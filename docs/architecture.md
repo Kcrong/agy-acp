@@ -17,6 +17,7 @@ The implementation is a protocol and subprocess adapter. It does not implement a
 | Concurrency | Standard-library `asyncio` | The adapter is I/O-bound and needs explicit task, stream, timeout, and subprocess ownership. |
 | Data validation | SDK Pydantic models | Keeps wire objects aligned with the canonical ACP schema. |
 | Build backend | Hatchling `1.32.4` | Stable PEP 517 backend with explicit `src` layout and compact project configuration; pip owns VCS fetching. |
+| Version source | Hatch VCS `0.5.0` | Derives PEP 440 package metadata from immutable release tags without a separately maintained version field. |
 | Lock and environment | uv `0.12.21` | Reproducible universal lock, project-local environments, and cross-platform Python management. |
 | Lint and format | Ruff `0.16.9` | One stable tool for formatting, import order, and lint rules. |
 | Static typing | mypy `2.3.1` in strict mode | Stable Python-native checker; verified against the ACP SDK surface on Python 3.13 and 3.14. |
@@ -158,7 +159,7 @@ No platform is advertised unless its hosted matrix and process-group tests pass.
 
 ## CI policy
 
-CI uses only standard GitHub-hosted runners in a four-cell matrix and runs the test jobs only for pull requests whose current state is ready for review. Draft revisions and pushes to `main` do not allocate test jobs. Branch protection requires all four current-head checks before `main` can be merged:
+CI uses only standard GitHub-hosted runners in a four-cell matrix and runs the test jobs for pull requests whose current state is ready for review and for every push to `main`. Draft revisions do not allocate test jobs. Branch protection requires all four current-head checks before `main` can be merged, and only a successful `main` run can enter automatic tagging and publication:
 
 - `ubuntu-latest`: Python 3.13 and 3.14
 - `macos-latest`: Python 3.13 and 3.14
@@ -176,11 +177,15 @@ Selected Actions:
 | `astral-sh/setup-uv` | `v10.2.0` | `c18668ad3cf93ea998bef934396af7bb5c839dc7` | Node 24 |
 | `actions/upload-artifact` | `v7.0.1` | `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a` | Node 24 |
 | `actions/download-artifact` | `v8.0.1` | `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c` | Node 24 |
+| `amannn/action-semantic-pull-request` | `v6.1.1` | `48f256284bd46cdaab1048c3721360e808335d50` | Node 24 |
+| `mathieudutour/github-tag-action` | `v7.0.0` | `af99e60ce8132224b8e6ebab5023449fe256ed46` | Node 24 |
 | `pypa/gh-action-pypi-publish` | `v1.14.2` | `dc37677b2e1c63e2034f94d8a5b11f265b73ba33` | Composite/container |
 
-The workflow pins uv `0.12.21`, installs from `uv.lock` with frozen resolution, grants read-only repository permissions, and exposes no repository secrets to pull-request code. The Ubuntu/Python 3.14 cell also runs the pinned experimental ACP TCK and retains its JSON report. The macOS/Python 3.13 cell repeats concurrent MCP cleanup 20 times to exercise Darwin process-group retirement. Every cell builds distributions, runs Twine strict metadata checks, validates exact wheel/sdist manifests, and installs the wheel in a clean environment.
+The workflow pins uv `0.12.21`, installs from `uv.lock` with frozen resolution, grants read-only repository permissions, and exposes no repository secrets to pull-request code. A separate `pull_request_target` workflow validates only PR metadata and never checks out contributor code. Squash-only repository settings default the `main` commit subject to the PR title plus its number; the release workflow independently queries every associated merged PR and requires that exact generated subject before tagging. The Ubuntu/Python 3.14 cell also runs the pinned experimental ACP TCK and retains its JSON report. The macOS/Python 3.13 cell repeats concurrent MCP cleanup 20 times to exercise Darwin process-group retirement. Every cell builds distributions, runs Twine strict metadata checks, validates exact wheel/sdist manifests, and installs the wheel in a clean environment.
 
-A separate manual `publish.yml` workflow validates an existing annotated `v<version>` tag on `main`, repeats the four supported test cells, builds and validates one immutable artifact, and transfers that exact artifact to a protected `pypi` environment. That environment accepts protected branches, requires `Kcrong` as its sole reviewer, and allows self-review so the sole maintainer can release; the repository administrator account is therefore an explicit publication trust boundary. Only the final publish job receives `id-token: write`; it uses PyPI Trusted Publishing and no password or repository secret. Human environment approval remains required before the irreversible upload.
+`github-tag-action` v7 is a recent major selected after reviewing its Node 24 migration, Conventional Commits parser unification, complete tag pagination, failure behavior, and passing upstream Ubuntu/macOS/Windows test matrix. Its immutable commit pin bounds adoption risk, and its history aggregation preserves the highest required bump when multiple tested commits are released together.
+
+The `publish.yml` workflow accepts only a successful `main` push result from the repository's `CI` workflow, confirms the tested commit remains in `main` history, and allows one active release while retaining up to 100 waiting runs with `queue: max`. If a newer release tag already contains that commit, the run exits without creating a backward tag; otherwise the preceding release tag must be its ancestor. For every commit after that tag, the workflow verifies the commit subject against the associated merged PR title before aggregating Conventional Commit bumps. It calculates the expected tag before creation and permits a retry to reuse an existing tag only when that tag is the same annotated version on the same commit. Hatch VCS derives package metadata from the exact tag. One Ubuntu build validates and records the immutable distributions. A non-privileged preflight then compares PyPI release filenames and SHA-256 hashes: complete matching releases are no-ops, partial matching releases stage only missing files, and conflicts fail closed. That filtered immutable workflow artifact crosses into the protected `pypi` job, which executes only the SHA-pinned download and Trusted Publishing Actions; it does not check out or execute repository code while `id-token: write` is available. A post-preflight race therefore fails closed and a later serialized retry replans safely. The environment accepts protected branches, requires `Kcrong` as its sole reviewer, and allows self-review so the sole maintainer can release; the repository administrator account is therefore an explicit publication trust boundary. Only the tag job receives `contents: write`, only the final publish job receives `id-token: write`, and no password or repository secret is used. Human environment approval remains required before the irreversible upload.
 
 ## Validation layers
 
